@@ -1,4 +1,4 @@
-import type { AttendanceEntry, AttendanceLogRow, AttendanceStatus, ChildRecord, OrgConfig } from '../types';
+import type { AttendanceEntry, AttendanceLogRow, AttendanceStatus, ChildRecord, OrgConfig, Session } from '../types';
 import { dayKey } from '../lib/time';
 
 // Everything the app needs to keep working with zero connectivity lives in localStorage:
@@ -11,6 +11,7 @@ const KEYS = {
   prefs: 'sat.prefs.v1',
   mockLogs: 'sat.mock.attendance_logs.v1',
   orgConfig: 'sat.org_config.v1',
+  session: 'sat.session.v1',
 } as const;
 
 function read<T>(key: string): T | null {
@@ -119,17 +120,25 @@ export const loadOrgConfig = (): OrgConfig => {
 export const saveOrgConfig = (config: OrgConfig) => write(KEYS.orgConfig, config);
 
 /**
- * Wipes the cached roster, attendance queue and today's synced marks — called when the
- * Sheet connection changes (a different organization, or switching to/from demo data), so
- * one organization's data can never linger into another's view or get synced to the wrong
- * sheet. Preferences and the MOCK sandbox log are left alone.
+ * Wipes the cached roster, attendance queue, today's synced marks and the signed-in session
+ * — called when the Sheet connection changes (a different organization, or switching to/from
+ * demo data), so one organization's data (or login) can never linger into another's view or
+ * get synced to the wrong sheet. Preferences and the MOCK sandbox log are left alone.
  */
 export function clearOrgScopedData() {
   try {
     localStorage.removeItem(KEYS.roster);
     localStorage.removeItem(KEYS.queue);
     localStorage.removeItem(KEYS.synced);
+    localStorage.removeItem(KEYS.session);
   } catch {
     /* storage blocked: nothing was cached to begin with */
   }
 }
+
+// ---- Session (who's logged in) ---------------------------------------------------------
+
+const EMPTY_SESSION: Session = { username: null };
+
+export const loadSession = (): Session => read<Session>(KEYS.session) ?? EMPTY_SESSION;
+export const saveSession = (session: Session) => write(KEYS.session, session);

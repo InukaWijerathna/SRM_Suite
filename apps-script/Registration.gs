@@ -70,6 +70,7 @@ function onOpen() {
     .createMenu('SRM Suite')
     .addItem('Create registration form', 'createRegistrationForm')
     .addItem('Generate missing QR codes', 'generateMissingQrCodes')
+    .addItem('Set a user\'s password', 'setUserPassword') // defined in Code.gs
     .addToUi();
 }
 

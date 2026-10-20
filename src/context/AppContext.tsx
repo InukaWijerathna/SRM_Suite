@@ -21,7 +21,14 @@ import type {
   StudentEdit,
   SyncStatus,
 } from '../types';
-import { ApiError, apiModeOf, fetchRoster, submitAttendance, updateStudent as apiUpdateStudent } from '../services/api';
+import {
+  ApiError,
+  apiModeOf,
+  fetchRoster,
+  login as apiLogin,
+  submitAttendance,
+  updateStudent as apiUpdateStudent,
+} from '../services/api';
 import { setSoundEnabled } from '../services/audio';
 import {
   clearOrgScopedData,
@@ -29,11 +36,13 @@ import {
   loadPrefs,
   loadQueue,
   loadRoster,
+  loadSession,
   loadSyncedToday,
   saveOrgConfig,
   savePrefs,
   saveQueue,
   saveRoster,
+  saveSession,
   saveSyncedToday,
   type SyncedMarks,
 } from '../services/storage';
@@ -89,6 +98,12 @@ interface AppContextValue {
   setOrgConfig: (config: OrgConfig) => void;
   isLive: boolean;
   phoneFormat: PhoneFormat;
+  // Session: who's signed in on this device. Demo data never requires a login.
+  /** True once a real sheet is connected: that's when login starts being required. */
+  requiresLogin: boolean;
+  username: string | null;
+  login: (username: string, password: string) => Promise<void>;
+  logout: () => void;
 }
 
 const AppContext = createContext<AppContextValue | null>(null);
@@ -180,6 +195,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [isOnline, setIsOnline] = useState(() => navigator.onLine);
   const [prefs, setPrefs] = useState(loadPrefs);
   const [orgConfig, setOrgConfigState] = useState(loadOrgConfig);
+  const [session, setSession] = useState(loadSession);
 
   const studentsById = useMemo(() => new Map(students.map((s) => [s.childId, s])), [students]);
 
@@ -439,6 +455,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           dispatch({ type: 'reset' });
           setStudents([]);
           setRosterStatus({ state: 'loading' });
+          setSession({ username: null }); // a login for the old sheet must not carry over
           void refreshRoster(next);
         }
         return next;
@@ -452,6 +469,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
     () => ({ countryCode: orgConfig.countryCode || '94', nationalLength: orgConfig.nationalLength || 9 }),
     [orgConfig.countryCode, orgConfig.nationalLength],
   );
+
+  // ---- session (who's logged in)
+  const login = useCallback(
+    async (username: string, password: string) => {
+      await apiLogin(username, password, orgConfig);
+      const next = { username: username.trim() };
+      setSession(next);
+      saveSession(next);
+    },
+    [orgConfig],
+  );
+  const logout = useCallback(() => {
+    setSession({ username: null });
+    saveSession({ username: null });
+  }, []);
 
   // Auto-sync: wait for a burst of marks to settle, then post them in one batch.
   const queueLength = marksState.queue.length;
@@ -489,6 +521,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setOrgConfig,
       isLive,
       phoneFormat,
+      requiresLogin: isLive,
+      username: session.username,
+      login,
+      logout,
     }),
     [
       students,
@@ -511,6 +547,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setOrgConfig,
       isLive,
       phoneFormat,
+      session,
+      login,
+      logout,
     ],
   );
 

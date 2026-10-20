@@ -18,6 +18,12 @@
  *        action never creates a new student. To set a TRUE/FALSE condition, use that
  *        column's own header, e.g. {"Health_Heart_Disease": true}.
  *
+ *   POST { action: "login", key?, username, password }
+ *        -> { ok: true } or { ok: false, error }
+ *        Checks `username`/`password` (plain text, sent once over HTTPS) against the SHA-256
+ *        hash stored for that user on login_credentials — the sheet never holds a plain-text
+ *        password. See "Setting a user's password" below for how an admin creates an account.
+ *
  * Sheet tabs (header names in row 1; column ORDER does not matter, names do):
  *   children_master        Child_ID_LKA006XXXX_4_digits, Name_of_Child, Gender, Contact_Number,
  *                          Whatsapp_Number, Address, GN_Division, Father_s_Name, Mother_s_Name,
@@ -28,6 +34,12 @@
  *                          Health_Heart_Disease, Disability_Visual_Impairment
  *                          (this tab is optional: the same columns may live on children_master)
  *   attendance_logs        log_id, timestamp, child_id, attendance_status   (starts empty)
+ *   login_credentials      Username, Password_Hash, Status (active/inactive, blank = active)
+ *                          Only needed once you've connected the app to this sheet, which is
+ *                          when it starts requiring login. Missing this tab (or having no
+ *                          active user in it) makes every login attempt fail — it is never
+ *                          treated as "no login needed". See "Setting a user's password" below
+ *                          for how an admin creates the first account.
  *
  * The script does not interpret the roster columns. It returns every column as-is (header
  * lower-cased, TRUE/FALSE as booleans) and the app matches them by name, so older
@@ -42,6 +54,7 @@ var SHEETS = {
   master: 'children_master',
   health: 'health_and_conditions',
   logs: 'attendance_logs',
+  logins: 'login_credentials',
 };
 var LOG_HEADERS = ['log_id', 'timestamp', 'child_id', 'attendance_status'];
 var VALID_STATUSES = ['Present', 'Absent', 'Late'];
@@ -74,6 +87,7 @@ function doPost(e) {
     requireKey_(body.key);
     if (body.action === 'appendAttendance') return appendAttendance_(body.entries);
     if (body.action === 'updateStudent') return updateStudent_(body.childId, body.master, body.health);
+    if (body.action === 'login') return login_(body.username, body.password);
     throw new Error('Unknown action: ' + body.action);
   });
 }
@@ -218,6 +232,102 @@ function writePatch_(sheet, rowIndex, patch) {
 function firstIndex_(list, predicate) {
   for (var i = 0; i < list.length; i++) if (predicate(list[i])) return i;
   return -1;
+}
+
+// ---- Login ------------------------------------------------------------------------------
+//
+// Setting a user's password (do this once per user, from the Apps Script editor):
+//   1. Open this project's editor (Extensions > Apps Script from the spreadsheet).
+//   2. Select the "setUserPassword" function in the dropdown next to Run, then click Run.
+//   3. It will prompt for a username and a new password, hash the password, and write the
+//      hash to login_credentials (creating the tab and the row if they don't exist yet).
+// The sheet only ever stores the hash — the password you type is never written anywhere.
+
+/** Checks a username/password against login_credentials. Never reveals which part was wrong. */
+function login_(username, password) {
+  var name = String(username || '').trim();
+  var pass = String(password || '');
+  if (!name || !pass) throw new Error('Username and password are required');
+
+  var sheet = getSpreadsheet_().getSheetByName(SHEETS.logins);
+  if (!sheet) throw new Error('Invalid username or password'); // no login_credentials tab yet
+
+  var headers = readHeaders_(sheet);
+  var userCol = headers.indexOf('username');
+  var hashCol = headers.indexOf('password_hash');
+  var statusCol = headers.indexOf('status');
+  if (userCol === -1 || hashCol === -1) throw new Error('login_credentials is missing Username/Password_Hash columns');
+
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) throw new Error('Invalid username or password');
+  var rows = sheet.getRange(2, 1, lastRow - 1, headers.length).getValues();
+  for (var i = 0; i < rows.length; i++) {
+    if (String(rows[i][userCol]).trim().toLowerCase() !== name.toLowerCase()) continue;
+    var status = statusCol === -1 ? 'active' : String(rows[i][statusCol] || 'active').trim().toLowerCase();
+    if (status === 'inactive') throw new Error('Invalid username or password');
+    if (String(rows[i][hashCol]) === sha256Hex_(pass)) return { ok: true };
+    throw new Error('Invalid username or password');
+  }
+  throw new Error('Invalid username or password'); // same message as a wrong password: don't reveal which
+}
+
+/** Prompts for a username + new password (Apps Script editor only) and stores its hash. */
+function setUserPassword() {
+  var ui = SpreadsheetApp.getUi();
+  var userResponse = ui.prompt('Set a user\'s password', 'Username:', ui.ButtonSet.OK_CANCEL);
+  if (userResponse.getSelectedButton() !== ui.Button.OK) return;
+  var username = userResponse.getResponseText().trim();
+  if (!username) return ui.alert('Username cannot be blank.');
+
+  // Apps Script's prompt box is NOT masked (it shows as plain text while typing) — there is
+  // no password-style input available server-side. The value is still never written to the
+  // sheet; only its hash is stored.
+  var passResponse = ui.prompt('Set a user\'s password', 'New password for "' + username + '" (typed in plain view, but never saved as plain text):', ui.ButtonSet.OK_CANCEL);
+  if (passResponse.getSelectedButton() !== ui.Button.OK) return;
+  var password = passResponse.getResponseText();
+  if (!password) return ui.alert('Password cannot be blank.');
+
+  var ss = getSpreadsheet_();
+  var sheet = ss.getSheetByName(SHEETS.logins) || ss.insertSheet(SHEETS.logins);
+  if (sheet.getLastRow() === 0) {
+    sheet.getRange(1, 1, 1, 3).setValues([['Username', 'Password_Hash', 'Status']]).setFontWeight('bold');
+    sheet.setFrozenRows(1);
+  }
+  var headers = readHeaders_(sheet);
+  var userCol = headers.indexOf('username');
+  var hashCol = headers.indexOf('password_hash');
+  var statusCol = headers.indexOf('status');
+
+  var lastRow = sheet.getLastRow();
+  var rowIndex = -1;
+  if (lastRow > 1) {
+    var ids = sheet.getRange(2, userCol + 1, lastRow - 1, 1).getValues();
+    for (var i = 0; i < ids.length; i++) {
+      if (String(ids[i][0]).trim().toLowerCase() === username.toLowerCase()) {
+        rowIndex = i + 2;
+        break;
+      }
+    }
+  }
+  if (rowIndex === -1) rowIndex = lastRow + 1;
+
+  sheet.getRange(rowIndex, userCol + 1).setValue(username);
+  sheet.getRange(rowIndex, hashCol + 1).setValue(sha256Hex_(password));
+  if (statusCol !== -1 && !sheet.getRange(rowIndex, statusCol + 1).getValue()) {
+    sheet.getRange(rowIndex, statusCol + 1).setValue('active');
+  }
+  ui.alert('Password set for "' + username + '".');
+}
+
+/** SHA-256 of `s`, as lowercase hex — matches the hash in login_credentials. */
+function sha256Hex_(s) {
+  var bytes = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, s, Utilities.Charset.UTF_8);
+  return bytes
+    .map(function (b) {
+      var v = (b + 256) % 256; // Apps Script bytes are signed (-128..127)
+      return (v < 16 ? '0' : '') + v.toString(16);
+    })
+    .join('');
 }
 
 /** Returns the attendance_logs tab, creating it (with headers) when missing or empty. */

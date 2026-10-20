@@ -151,6 +151,14 @@ async function liveUpdateStudent(config: OrgConfig, childId: string, patch: Stud
   }
 }
 
+async function liveLogin(config: OrgConfig, username: string, password: string): Promise<void> {
+  await callScript<{ ok: boolean }>(config.scriptUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+    body: JSON.stringify({ action: 'login', key: config.apiKey || undefined, username, password }),
+  });
+}
+
 // ---- Public API -----------------------------------------------------------------------
 
 /** children_master!A2:N and health_and_conditions!A2:F in a single request. */
@@ -171,6 +179,17 @@ export const submitAttendance = (entries: AttendanceEntry[], config: OrgConfig):
 export const updateStudent = async (childId: string, patch: StudentPatch, config: OrgConfig): Promise<void> => {
   if (apiModeOf(config) !== 'live') return;
   await liveUpdateStudent(config, childId, patch);
+};
+
+/**
+ * Checks a username/password against the sheet's login_credentials tab. Throws ApiError with
+ * a user-facing message on any failure (wrong credentials, no such tab, inactive account —
+ * the server deliberately doesn't say which). Demo mode has no credentials to check, so the
+ * app never calls this while disconnected; if it somehow is, it resolves (nothing to fail).
+ */
+export const login = async (username: string, password: string, config: OrgConfig): Promise<void> => {
+  if (apiModeOf(config) !== 'live') return;
+  await liveLogin(config, username, password);
 };
 
 /**

@@ -145,3 +145,12 @@ export interface OrgConfig {
   /** Digit count of a national number once the country code is stripped (e.g. 9, 10). */
   nationalLength: number;
 }
+
+/**
+ * Who's signed in on this device, kept on-device only (never sent anywhere but the one login
+ * request). Cleared automatically whenever the Sheet connection changes — a login for one
+ * organization's sheet must never carry over to another's.
+ */
+export interface Session {
+  username: string | null;
+}

@@ -1,10 +1,12 @@
-import { lazy, Suspense, useState } from 'react';
+import { lazy, Suspense, useCallback, useState } from 'react';
 import { LoaderCircle } from 'lucide-react';
-import { AppProvider } from './context/AppContext';
+import { AppProvider, useApp } from './context/AppContext';
 import type { TabId } from './types';
 import { Header } from './components/Header';
+import { Login } from './components/Login';
 import { StudentDirectory } from './components/StudentDirectory';
 import { AttendanceList } from './components/AttendanceList';
+import { useBackHandler } from './lib/backButton';
 
 // The QR decoder is the heaviest dependency: load it only when the scanner tab is opened.
 // (The service worker still precaches the chunk, so it works offline.)
@@ -20,6 +22,11 @@ function Shell() {
     if (next === 'scanner') setScannerOpened(true);
     setTab(next);
   };
+
+  // Android back button: from Attendance/Scanner, go back to Directory (the home tab) first,
+  // same as any other app's bottom-nav back behaviour. Only registered while off Directory,
+  // so pressing back there falls through to the app's default — e.g. exiting.
+  useBackHandler(useCallback(() => setTab('directory'), []), tab !== 'directory');
 
   return (
     <div className="min-h-dvh">
@@ -43,10 +50,16 @@ function Shell() {
   );
 }
 
+/** Gates the app behind Login whenever a real sheet is connected and nobody's signed in. */
+function Gate() {
+  const { requiresLogin, username } = useApp();
+  return requiresLogin && !username ? <Login /> : <Shell />;
+}
+
 export default function App() {
   return (
     <AppProvider>
-      <Shell />
+      <Gate />
     </AppProvider>
   );
 }

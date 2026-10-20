@@ -10,6 +10,7 @@ import {
   KeyRound,
   ListChecks,
   LoaderCircle,
+  LogOut,
   Phone,
   RotateCcw,
   Settings2,
@@ -17,6 +18,7 @@ import {
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { ApiError, pingScript } from '../services/api';
+import { useBackHandler } from '../lib/backButton';
 import { cn } from '../lib/cn';
 
 const FOCUSABLE = 'a[href], button:not([disabled]), input, select, textarea, [tabindex]:not([tabindex="-1"])';
@@ -60,9 +62,10 @@ interface SettingsProps {
  * to demo data at any time without a new app build.
  */
 export function Settings({ onClose }: SettingsProps) {
-  const { orgConfig, setOrgConfig, isLive } = useApp();
+  const { orgConfig, setOrgConfig, isLive, username, logout } = useApp();
   const dialogRef = useRef<HTMLDivElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
+  useBackHandler(onClose);
 
   const [orgName, setOrgName] = useState(orgConfig.orgName);
   const [scriptUrl, setScriptUrl] = useState(orgConfig.scriptUrl);
@@ -390,6 +393,21 @@ export function Settings({ onClose }: SettingsProps) {
                   <RotateCcw className="h-4 w-4" aria-hidden="true" />
                   Disconnect &amp; use demo data instead
                 </button>
+              )}
+              {username && (
+                <div className="flex items-center justify-between gap-3 rounded-xl bg-slate-50 px-4 py-3 ring-1 ring-slate-200">
+                  <span className="text-sm text-slate-600">
+                    Signed in as <span className="font-semibold text-slate-900">{username}</span>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={logout}
+                    className="flex min-h-touch items-center gap-1.5 rounded-lg px-3 text-sm font-semibold text-rose-700 hover:bg-rose-50"
+                  >
+                    <LogOut className="h-4 w-4" aria-hidden="true" />
+                    Log out
+                  </button>
+                </div>
               )}
             </div>
           </form>

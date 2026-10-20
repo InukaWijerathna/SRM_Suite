@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { CircleAlert, LoaderCircle, MapPin, MessageCircle, Pencil, Phone, Save, X } from 'lucide-react';
 import type { ChildRecord, Gender, StudentEdit, StudentStatus, WeightCategory } from '../types';
 import { humanize } from '../lib/roster';
@@ -6,6 +6,7 @@ import { localPhone, prettyPhone, whatsappNumber } from '../lib/phone';
 import { ageFromBirthday, formatDate } from '../lib/time';
 import { cn } from '../lib/cn';
 import { useApp } from '../context/AppContext';
+import { useBackHandler } from '../lib/backButton';
 import { Avatar } from './Avatar';
 
 const CATEGORY_LABEL: Record<WeightCategory, { label: string; className: string }> = {
@@ -57,6 +58,9 @@ export function StudentDetailModal({ child, onClose }: StudentDetailModalProps) 
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
   const [editing, setEditing] = useState(false);
+  // Android back button: close edit mode first if it's open, same as Cancel; otherwise close
+  // the whole modal, same as the X button.
+  useBackHandler(useCallback(() => (editing ? setEditing(false) : onClose()), [editing, onClose]));
 
   // Modal behaviour: focus in, Esc closes, Tab stays inside, page behind doesn't scroll,
   // and focus returns to the card that opened it.
