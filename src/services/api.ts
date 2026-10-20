@@ -1,4 +1,4 @@
-import type { AttendanceEntry, AttendanceLogRow, OrgConfig, RosterPayload, StudentPatch, SubmitResult } from '../types';
+import type { AttendanceEntry, AttendanceLogRow, OrgConfig, Role, RosterPayload, StudentPatch, SubmitResult } from '../types';
 import { loadMockLogs, saveMockLogs } from './storage';
 
 /**
@@ -151,12 +151,13 @@ async function liveUpdateStudent(config: OrgConfig, childId: string, patch: Stud
   }
 }
 
-async function liveLogin(config: OrgConfig, username: string, password: string): Promise<void> {
-  await callScript<{ ok: boolean }>(config.scriptUrl, {
+async function liveLogin(config: OrgConfig, username: string, password: string): Promise<Role> {
+  const res = await callScript<{ ok: boolean; role?: string }>(config.scriptUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'text/plain;charset=utf-8' },
     body: JSON.stringify({ action: 'login', key: config.apiKey || undefined, username, password }),
   });
+  return res.role === 'viewer' ? 'viewer' : 'editor';
 }
 
 // ---- Public API -----------------------------------------------------------------------
@@ -187,9 +188,9 @@ export const updateStudent = async (childId: string, patch: StudentPatch, config
  * the server deliberately doesn't say which). Demo mode has no credentials to check, so the
  * app never calls this while disconnected; if it somehow is, it resolves (nothing to fail).
  */
-export const login = async (username: string, password: string, config: OrgConfig): Promise<void> => {
-  if (apiModeOf(config) !== 'live') return;
-  await liveLogin(config, username, password);
+export const login = async (username: string, password: string, config: OrgConfig): Promise<Role> => {
+  if (apiModeOf(config) !== 'live') return 'editor';
+  return liveLogin(config, username, password);
 };
 
 /**

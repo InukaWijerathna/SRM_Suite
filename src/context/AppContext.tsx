@@ -16,6 +16,7 @@ import type {
   ChildRecord,
   ConditionColumn,
   OrgConfig,
+  Role,
   RosterStatus,
   SheetRow,
   StudentEdit,
@@ -102,6 +103,8 @@ interface AppContextValue {
   /** True once a real sheet is connected: that's when login starts being required. */
   requiresLogin: boolean;
   username: string | null;
+  /** 'viewer' is read-only; null until signed in or when the sheet has no Role column (= editor). */
+  role: Role | null;
   login: (username: string, password: string) => Promise<void>;
   logout: () => void;
 }
@@ -455,7 +458,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           dispatch({ type: 'reset' });
           setStudents([]);
           setRosterStatus({ state: 'loading' });
-          setSession({ username: null }); // a login for the old sheet must not carry over
+          setSession({ username: null, role: null }); // a login for the old sheet must not carry over
           void refreshRoster(next);
         }
         return next;
@@ -473,16 +476,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // ---- session (who's logged in)
   const login = useCallback(
     async (username: string, password: string) => {
-      await apiLogin(username, password, orgConfig);
-      const next = { username: username.trim() };
+      const role = await apiLogin(username, password, orgConfig);
+      const next = { username: username.trim(), role };
       setSession(next);
       saveSession(next);
     },
     [orgConfig],
   );
   const logout = useCallback(() => {
-    setSession({ username: null });
-    saveSession({ username: null });
+    setSession({ username: null, role: null });
+    saveSession({ username: null, role: null });
   }, []);
 
   // Auto-sync: wait for a burst of marks to settle, then post them in one batch.
@@ -523,6 +526,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       phoneFormat,
       requiresLogin: isLive,
       username: session.username,
+      role: session.role,
       login,
       logout,
     }),

@@ -151,6 +151,10 @@ export interface OrgConfig {
  * request). Cleared automatically whenever the Sheet connection changes — a login for one
  * organization's sheet must never carry over to another's.
  */
+export type Role = 'viewer' | 'editor';
+
 export interface Session {
   username: string | null;
+  /** null when signed out, or when the sheet has no Role column (treated as editor elsewhere). */
+  role: Role | null;
 }

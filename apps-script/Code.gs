@@ -34,7 +34,9 @@
  *                          Health_Heart_Disease, Disability_Visual_Impairment
  *                          (this tab is optional: the same columns may live on children_master)
  *   attendance_logs        log_id, timestamp, child_id, attendance_status   (starts empty)
- *   login_credentials      Username, Password_Hash, Status (active/inactive, blank = active)
+ *   login_credentials      Username, Password_Hash, Status (active/inactive, blank = active),
+ *                          Role (viewer/editor, blank = editor — a dropdown is added automatically
+ *                          by the "Set a user's password" menu item)
  *                          Only needed once you've connected the app to this sheet, which is
  *                          when it starts requiring login. Missing this tab (or having no
  *                          active user in it) makes every login attempt fail — it is never
@@ -256,6 +258,7 @@ function login_(username, password) {
   var userCol = headers.indexOf('username');
   var hashCol = headers.indexOf('password_hash');
   var statusCol = headers.indexOf('status');
+  var roleCol = headers.indexOf('role');
   if (userCol === -1 || hashCol === -1) throw new Error('login_credentials is missing Username/Password_Hash columns');
 
   var lastRow = sheet.getLastRow();
@@ -265,7 +268,13 @@ function login_(username, password) {
     if (String(rows[i][userCol]).trim().toLowerCase() !== name.toLowerCase()) continue;
     var status = statusCol === -1 ? 'active' : String(rows[i][statusCol] || 'active').trim().toLowerCase();
     if (status === 'inactive') throw new Error('Invalid username or password');
-    if (String(rows[i][hashCol]) === sha256Hex_(pass)) return { ok: true };
+    if (String(rows[i][hashCol]) === sha256Hex_(pass)) {
+      // No Role column, or the cell is blank, means full access — matches every account's
+      // behaviour before roles existed, so adding the column never silently locks anyone out.
+      var role = roleCol === -1 ? 'editor' : String(rows[i][roleCol] || 'editor').trim().toLowerCase();
+      if (role !== 'viewer' && role !== 'editor') role = 'editor';
+      return { ok: true, role: role };
+    }
     throw new Error('Invalid username or password');
   }
   throw new Error('Invalid username or password'); // same message as a wrong password: don't reveal which
@@ -287,16 +296,35 @@ function setUserPassword() {
   var password = passResponse.getResponseText();
   if (!password) return ui.alert('Password cannot be blank.');
 
+  var roleResponse = ui.prompt(
+    'Set a user\'s password',
+    'Role for "' + username + '" — type "viewer" (read-only) or "editor" (can edit records). Leave blank for editor:',
+    ui.ButtonSet.OK_CANCEL,
+  );
+  if (roleResponse.getSelectedButton() !== ui.Button.OK) return;
+  var roleInput = roleResponse.getResponseText().trim().toLowerCase();
+  var role = roleInput === 'viewer' ? 'viewer' : 'editor';
+
   var ss = getSpreadsheet_();
   var sheet = ss.getSheetByName(SHEETS.logins) || ss.insertSheet(SHEETS.logins);
   if (sheet.getLastRow() === 0) {
-    sheet.getRange(1, 1, 1, 3).setValues([['Username', 'Password_Hash', 'Status']]).setFontWeight('bold');
+    sheet.getRange(1, 1, 1, 4).setValues([['Username', 'Password_Hash', 'Status', 'Role']]).setFontWeight('bold');
     sheet.setFrozenRows(1);
   }
   var headers = readHeaders_(sheet);
   var userCol = headers.indexOf('username');
   var hashCol = headers.indexOf('password_hash');
   var statusCol = headers.indexOf('status');
+  var roleCol = headers.indexOf('role');
+  if (roleCol === -1) {
+    roleCol = headers.length;
+    sheet.getRange(1, roleCol + 1).setValue('Role').setFontWeight('bold');
+  }
+
+  // Dropdown (viewer/editor) on the Role column, covering plenty of future rows so anyone
+  // adding a user directly on the sheet gets the same two choices instead of free-typing it.
+  var validation = SpreadsheetApp.newDataValidation().requireValueInList(['viewer', 'editor'], true).setAllowInvalid(false).build();
+  sheet.getRange(2, roleCol + 1, 998, 1).setDataValidation(validation);
 
   var lastRow = sheet.getLastRow();
   var rowIndex = -1;
@@ -316,7 +344,8 @@ function setUserPassword() {
   if (statusCol !== -1 && !sheet.getRange(rowIndex, statusCol + 1).getValue()) {
     sheet.getRange(rowIndex, statusCol + 1).setValue('active');
   }
-  ui.alert('Password set for "' + username + '".');
+  sheet.getRange(rowIndex, roleCol + 1).setValue(role);
+  ui.alert('Password set for "' + username + '" (role: ' + role + ').');
 }
 
 /** SHA-256 of `s`, as lowercase hex — matches the hash in login_credentials. */

@@ -97,7 +97,8 @@ export function StudentDetailModal({ child, onClose }: StudentDetailModalProps) 
     };
   }, []);
 
-  const { phoneFormat, students } = useApp();
+  const { phoneFormat, students, role } = useApp();
+  const canEdit = role !== 'viewer';
   // Re-derive from live roster state (not just the prop) so a saved edit shows immediately.
   const current = students.find((s) => s.childId === child.childId) ?? child;
   const age = current.birthday ? ageFromBirthday(current.birthday) : undefined;
@@ -143,7 +144,7 @@ export function StudentDetailModal({ child, onClose }: StudentDetailModalProps) 
               </span>
             )}
           </div>
-          {!editing && (
+          {!editing && canEdit && (
             <button
               type="button"
               onClick={() => setEditing(true)}
