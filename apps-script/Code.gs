@@ -9,6 +9,15 @@
  *   POST { action: "appendAttendance", key?, entries: [{log_id, timestamp, child_id, attendance_status}] }
  *        -> { ok, appended, duplicates }
  *
+ *   POST { action: "updateStudent", key?, childId, master?: {header: value}, health?: {header: value} }
+ *        -> { ok, updatedMaster, updatedHealth }
+ *        Edits an existing child's record (e.g. from the app's "Edit" screen). `master` and
+ *        `health` are partial {header_name: value} objects; only columns that already exist
+ *        on that tab are written (an unknown header name is silently ignored, never adds a
+ *        new column) and only a row that already exists for `childId` is updated — this
+ *        action never creates a new student. To set a TRUE/FALSE condition, use that
+ *        column's own header, e.g. {"Health_Heart_Disease": true}.
+ *
  * Sheet tabs (header names in row 1; column ORDER does not matter, names do):
  *   children_master        Child_ID_LKA006XXXX_4_digits, Name_of_Child, Gender, Contact_Number,
  *                          Whatsapp_Number, Address, GN_Division, Father_s_Name, Mother_s_Name,
@@ -63,8 +72,9 @@ function doPost(e) {
   return respond_(function () {
     var body = JSON.parse((e && e.postData && e.postData.contents) || '{}');
     requireKey_(body.key);
-    if (body.action !== 'appendAttendance') throw new Error('Unknown action: ' + body.action);
-    return appendAttendance_(body.entries);
+    if (body.action === 'appendAttendance') return appendAttendance_(body.entries);
+    if (body.action === 'updateStudent') return updateStudent_(body.childId, body.master, body.health);
+    throw new Error('Unknown action: ' + body.action);
   });
 }
 
@@ -137,6 +147,77 @@ function validateEntry_(entry) {
   if (isNaN(Date.parse(timestamp))) throw new Error('Invalid timestamp: ' + timestamp);
 
   return { log_id: logId, timestamp: timestamp, child_id: childId, attendance_status: status };
+}
+
+// ---- Editing a student -----------------------------------------------------------------
+
+/** Writes `master`/`health` patches onto an EXISTING child's rows. Never creates a student. */
+function updateStudent_(childId, masterPatch, healthPatch) {
+  var id = String(childId || '').trim().toUpperCase();
+  if (!id) throw new Error('childId is required');
+
+  // Same lock as attendance: an edit must not interleave with a registration or another edit.
+  var lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+  try {
+    // The roster tab is the source of truth for "does this child exist" — a missing or
+    // patch-free health tab is never itself an error, only children_master is mandatory.
+    var masterSheet = getSpreadsheet_().getSheetByName(SHEETS.master);
+    if (!masterSheet) throw new Error('Missing tab: ' + SHEETS.master);
+    var masterRow = findRow_(masterSheet, id);
+    if (masterRow === -1) throw new Error('No existing record for ' + id + ' on ' + SHEETS.master);
+    var updatedMaster = writePatch_(masterSheet, masterRow, masterPatch);
+
+    var updatedHealth = false;
+    var healthSheet = getSpreadsheet_().getSheetByName(SHEETS.health);
+    if (healthSheet) {
+      var healthRow = findRow_(healthSheet, id);
+      if (healthRow !== -1) updatedHealth = writePatch_(healthSheet, healthRow, healthPatch);
+    }
+    return { ok: true, updatedMaster: updatedMaster, updatedHealth: updatedHealth };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/** Row number (1-based) of `id` on `sheet`, by its child-ID-like column, or -1 if absent. */
+function findRow_(sheet, id) {
+  var headers = readHeaders_(sheet);
+  var idCol = firstIndex_(headers, function (h) { return h.indexOf('child_id') === 0; });
+  if (idCol === -1) throw new Error(sheet.getName() + ' has no child ID column');
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) return -1;
+  var ids = sheet.getRange(2, idCol + 1, lastRow - 1, 1).getValues();
+  for (var i = 0; i < ids.length; i++) {
+    if (String(ids[i][0]).trim().toUpperCase() === id) return i + 2;
+  }
+  return -1;
+}
+
+/**
+ * Overwrites the given columns of `rowIndex` by header name. Returns whether anything was
+ * actually written — false for an empty/missing patch, or one whose headers don't match any
+ * column (ignored rather than creating a new one: editing a student never changes the schema).
+ */
+function writePatch_(sheet, rowIndex, patch) {
+  if (!patch || typeof patch !== 'object') return false;
+  var headers = readHeaders_(sheet);
+  var applied = false;
+  Object.keys(patch).forEach(function (rawHeader) {
+    var col = headers.indexOf(normalizeHeader_(rawHeader));
+    if (col === -1) return; // unknown column: ignore rather than invent one
+    var value = patch[rawHeader];
+    var cell = sheet.getRange(rowIndex, col + 1);
+    if (typeof value === 'string' && /^0\d+$/.test(value)) cell.setNumberFormat('@'); // keep a leading 0
+    cell.setValue(value === null || value === undefined ? '' : value);
+    applied = true;
+  });
+  return applied;
+}
+
+function firstIndex_(list, predicate) {
+  for (var i = 0; i < list.length; i++) if (predicate(list[i])) return i;
+  return -1;
 }
 
 /** Returns the attendance_logs tab, creating it (with headers) when missing or empty. */

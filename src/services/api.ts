@@ -1,4 +1,4 @@
-import type { AttendanceEntry, AttendanceLogRow, OrgConfig, RosterPayload, SubmitResult } from '../types';
+import type { AttendanceEntry, AttendanceLogRow, OrgConfig, RosterPayload, StudentPatch, SubmitResult } from '../types';
 import { loadMockLogs, saveMockLogs } from './storage';
 
 /**
@@ -129,6 +129,28 @@ async function liveSubmit(config: OrgConfig, rows: AttendanceLogRow[]): Promise<
   return { appended: body.appended ?? rows.length, duplicates: body.duplicates ?? 0 };
 }
 
+async function liveUpdateStudent(config: OrgConfig, childId: string, patch: StudentPatch): Promise<void> {
+  const body = await callScript<{ updatedMaster?: boolean; updatedHealth?: boolean }>(config.scriptUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+    body: JSON.stringify({
+      action: 'updateStudent',
+      key: config.apiKey || undefined,
+      childId,
+      master: patch.master,
+      health: patch.health,
+    }),
+  });
+  if (!body.updatedMaster && !body.updatedHealth) {
+    // The call succeeded but nothing matched a real column — almost always a header-name
+    // mismatch (see StudentPatch), not a transient failure, so say so plainly.
+    throw new ApiError(
+      "Saved, but nothing changed on the sheet — its column names may not match the app's (see README).",
+      'server',
+    );
+  }
+}
+
 // ---- Public API -----------------------------------------------------------------------
 
 /** children_master!A2:N and health_and_conditions!A2:F in a single request. */
@@ -139,6 +161,16 @@ export const fetchRoster = (config: OrgConfig): Promise<RosterPayload> =>
 export const submitAttendance = (entries: AttendanceEntry[], config: OrgConfig): Promise<SubmitResult> => {
   const rows = entries.map(toLogRow);
   return apiModeOf(config) === 'live' ? liveSubmit(config, rows) : mockSubmit(rows);
+};
+
+/**
+ * Writes an edit to an existing child's record. In MOCK mode there's no sheet to write to —
+ * the caller applies the edit to the local demo roster directly, this just confirms there's
+ * nothing to send over the network.
+ */
+export const updateStudent = async (childId: string, patch: StudentPatch, config: OrgConfig): Promise<void> => {
+  if (apiModeOf(config) !== 'live') return;
+  await liveUpdateStudent(config, childId, patch);
 };
 
 /**

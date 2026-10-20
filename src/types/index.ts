@@ -51,6 +51,49 @@ export interface AttendanceEntry {
 /** A row exactly as it comes out of a sheet tab, keyed by the header names. */
 export type SheetRow = Record<string, string | number | boolean | null | undefined>;
 
+/**
+ * An edit to an existing child's record, sent to `updateStudent`. `master`/`health` are
+ * `{sheet_header: value}` — the sheet's own canonical column names (see README), since the
+ * backend matches headers literally and doesn't carry the app's alias table. A sheet using
+ * non-standard header spellings won't pick up edits to the fields that differ; renaming to
+ * the standard headers (see the blank template) fixes that.
+ */
+export interface StudentPatch {
+  master?: SheetRow;
+  health?: SheetRow;
+}
+
+/** One medical-condition column the sheet currently tracks, for the edit screen's checklist. */
+export interface ConditionColumn {
+  /** Lower-cased header, e.g. "health_heart_disease" — what gets sent back when toggled. */
+  key: string;
+  /** What the app shows for it, e.g. "Heart Disease". */
+  label: string;
+}
+
+/** The editable fields on the student edit screen. Mirrors ChildRecord, minus derived fields. */
+export interface StudentEdit {
+  fullName: string;
+  gender: Gender;
+  schoolGrade: string;
+  address: string;
+  gnDivision: string;
+  contactPrimary: string;
+  contactWhatsapp: string;
+  fatherName: string;
+  motherName: string;
+  careGiver: string;
+  religion: string;
+  status: StudentStatus;
+  birthday: string;
+  nameLocal: string;
+  officeName: string;
+  weightKg: string;
+  heightCm: string;
+  /** Every known condition column's key -> whether it's ticked, for every column, not just the true ones. */
+  conditionKeys: Record<string, boolean>;
+}
+
 export interface RosterPayload {
   master: SheetRow[];
   health: SheetRow[];

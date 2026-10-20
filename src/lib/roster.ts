@@ -150,6 +150,22 @@ function weightStatusOf(label: string): WeightCategory | undefined {
  *   child has no value on the health tab (health-tab values win where both exist).
  * - Rows without a child ID are ignored. If an ID repeats, the later row wins.
  */
+/**
+ * Every medical-condition column the sheet currently tracks (across all students, not just
+ * one), as `{ key, label }` — `key` is the lower-cased header to send back when editing a
+ * student's conditions (e.g. "health_heart_disease" for a "Health_Heart_Disease" column),
+ * `label` is what the app shows for it. Weight-status columns (Under/Over Weight) are
+ * excluded — those aren't conditions, see `weightStatusOf`. Used to build the condition
+ * checklist on the student edit screen.
+ */
+export function listConditionColumns(master: SheetRow[], health: SheetRow[]): { key: string; label: string }[] {
+  const rows = [...master, ...health].map(canonicalizeRow);
+  return detectFlagKeys(rows)
+    .map((key) => ({ key, label: flagLabel(key) }))
+    .filter((c) => weightStatusOf(c.label) === undefined)
+    .sort((a, b) => compareText(a.label, b.label));
+}
+
 export function joinRoster(master: SheetRow[], health: SheetRow[]): ChildRecord[] {
   const combined = new Map<string, Row>();
   for (const raw of master) {

@@ -14,11 +14,14 @@ import type {
   AttendanceEntry,
   AttendanceStatus,
   ChildRecord,
+  ConditionColumn,
   OrgConfig,
   RosterStatus,
+  SheetRow,
+  StudentEdit,
   SyncStatus,
 } from '../types';
-import { ApiError, apiModeOf, fetchRoster, submitAttendance } from '../services/api';
+import { ApiError, apiModeOf, fetchRoster, submitAttendance, updateStudent as apiUpdateStudent } from '../services/api';
 import { setSoundEnabled } from '../services/audio';
 import {
   clearOrgScopedData,
@@ -35,7 +38,7 @@ import {
   type SyncedMarks,
 } from '../services/storage';
 import type { PhoneFormat } from '../lib/phone';
-import { joinRoster, normalizeId } from '../lib/roster';
+import { compareText, joinRoster, listConditionColumns, normalizeId } from '../lib/roster';
 import { dayKey, isoNow, newLogId } from '../lib/time';
 
 /** A child's effective attendance for today: either still queued (pending) or already synced. */
@@ -57,6 +60,10 @@ interface AppContextValue {
   studentsById: Map<string, ChildRecord>;
   rosterStatus: RosterStatus;
   refreshRoster: () => Promise<void>;
+  /** Every medical-condition column the sheet currently tracks, for the edit screen. */
+  conditionColumns: ConditionColumn[];
+  /** Saves an edit to an existing child and reflects it locally immediately. Throws on failure. */
+  updateStudent: (childId: string, edit: StudentEdit) => Promise<void>;
   // Attendance
   queue: AttendanceEntry[];
   marks: Map<string, Mark>;
@@ -162,6 +169,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [rosterStatus, setRosterStatus] = useState<RosterStatus>(
     cachedRoster ? { state: 'ready', fetchedAt: cachedRoster.fetchedAt } : { state: 'loading' },
   );
+  // Recomputed on every roster fetch (not cached across reloads — cheap, and no stale
+  // columns from a since-switched-away-from sheet lingering).
+  const [conditionColumns, setConditionColumns] = useState<ConditionColumn[]>([]);
   const [marksState, dispatch] = useReducer(marksReducer, undefined, () => ({
     queue: loadQueue(),
     synced: loadSyncedToday(),
@@ -240,6 +250,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const joined = joinRoster(master, health);
       const fetchedAt = isoNow();
       setStudents(joined);
+      setConditionColumns(listConditionColumns(master, health));
       saveRoster({ students: joined, fetchedAt });
       setRosterStatus({ state: 'ready', fetchedAt });
     } catch (err) {
@@ -265,6 +276,77 @@ export function AppProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (isOnline && students.length === 0) void refreshRoster();
   }, [isOnline, students.length, refreshRoster]);
+
+  // ---- editing a student
+  const updateStudent = useCallback(async (childId: string, edit: StudentEdit) => {
+    const weightKg = edit.weightKg.trim() === '' ? undefined : Number(edit.weightKg);
+    const heightCm = edit.heightCm.trim() === '' ? undefined : Number(edit.heightCm);
+
+    // Canonical Title_Case headers (see StudentPatch): matches our own templates and the
+    // headers Settings tells an org to use, but not every possible alias roster.ts accepts.
+    const master = {
+      Name_of_Child: edit.fullName,
+      Gender: edit.gender,
+      School_Grade: edit.schoolGrade,
+      Address: edit.address,
+      GN_Division: edit.gnDivision,
+      Contact_Number: edit.contactPrimary,
+      Whatsapp_Number: edit.contactWhatsapp,
+      Father_s_Name: edit.fatherName,
+      Mother_s_Name: edit.motherName,
+      Care_Giver: edit.careGiver,
+      Religion: edit.religion,
+      Status: edit.status,
+      Birthday: edit.birthday,
+      Child_Name_In_BC: edit.nameLocal,
+      Office_Name: edit.officeName,
+    };
+    const health: SheetRow = { ...edit.conditionKeys };
+    if (weightKg !== undefined) health.Weight_Kg = weightKg;
+    if (heightCm !== undefined) health.Height_cm = heightCm;
+
+    await apiUpdateStudent(childId, { master, health }, latest.current.orgConfig);
+
+    // Reflect the edit locally right away rather than waiting on a full resync — in MOCK
+    // mode this IS the write (there's no sheet), in LIVE mode it's just avoiding a round trip.
+    const conditions = conditionColumns
+      .filter((c) => edit.conditionKeys[c.key])
+      .map((c) => c.label)
+      .sort(compareText);
+    const bmi = weightKg && heightCm ? Math.round((weightKg / (heightCm / 100) ** 2) * 10) / 10 : undefined;
+
+    setStudents((prev) => {
+      const next = prev.map((s): ChildRecord =>
+        s.childId !== childId
+          ? s
+          : {
+              ...s,
+              fullName: edit.fullName.trim() || s.childId,
+              gender: edit.gender,
+              schoolGrade: edit.schoolGrade,
+              address: edit.address,
+              gnDivision: edit.gnDivision,
+              contactPrimary: edit.contactPrimary,
+              contactWhatsapp: edit.contactWhatsapp,
+              fatherName: edit.fatherName,
+              motherName: edit.motherName,
+              careGiver: edit.careGiver,
+              religion: edit.religion,
+              status: edit.status,
+              birthday: edit.birthday || undefined,
+              nameLocal: edit.nameLocal || undefined,
+              officeName: edit.officeName || undefined,
+              weightKg,
+              heightCm,
+              bmi,
+              conditions,
+              medicalCondition: conditions.length ? conditions.join(', ') : undefined,
+            },
+      );
+      saveRoster({ students: next, fetchedAt: isoNow() });
+      return next;
+    });
+  }, [conditionColumns]);
 
   // ---- attendance actions
   const toggleMark = useCallback((childId: string, status: AttendanceStatus) => {
@@ -386,6 +468,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       studentsById,
       rosterStatus,
       refreshRoster,
+      conditionColumns,
+      updateStudent,
       queue: marksState.queue,
       marks,
       toggleMark,
@@ -411,6 +495,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       studentsById,
       rosterStatus,
       refreshRoster,
+      conditionColumns,
+      updateStudent,
       marksState.queue,
       marks,
       toggleMark,
