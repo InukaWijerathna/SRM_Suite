@@ -73,6 +73,9 @@ interface AppContextValue {
   setAutoSync: (on: boolean) => void;
   soundOn: boolean;
   setSoundOn: (on: boolean) => void;
+  /** False only until the Settings screen's first-launch setup instructions have been shown once. */
+  setupSeen: boolean;
+  markSetupSeen: () => void;
   // Organization: which Google Sheet this install is connected to, entered via Settings
   orgConfig: OrgConfig;
   /** Saves the config, and re-fetches the roster from whatever it now points at. */
@@ -220,7 +223,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // mount; setOrgConfig below triggers an explicit extra refresh when the sheet changes,
   // passing the new config directly rather than waiting for the ref to catch up.
   const refreshRoster = useCallback(async (overrideConfig?: OrgConfig) => {
-    if (refreshingRoster.current) return;
+    // The busy-guard only dedupes *ambient* refreshes (mount, back-online, an idle Sync
+    // tap) — it must never block an explicit config switch. Without this, a slow fetch
+    // still in flight for the *old* sheet would hold the guard open, the new sheet's fetch
+    // would be silently skipped, and the generation check below would then (correctly)
+    // discard the stale old response, leaving nothing to ever resolve "loading".
+    const forced = overrideConfig !== undefined;
+    if (!forced && refreshingRoster.current) return;
     refreshingRoster.current = true;
     const config = overrideConfig ?? latest.current.orgConfig;
     const generation = rosterGeneration.current;
@@ -390,6 +399,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setAutoSync: (autoSync) => setPrefs((p) => ({ ...p, autoSync })),
       soundOn: prefs.soundOn,
       setSoundOn: (soundOn) => setPrefs((p) => ({ ...p, soundOn })),
+      setupSeen: prefs.setupSeen,
+      markSetupSeen: () => setPrefs((p) => (p.setupSeen ? p : { ...p, setupSeen: true })),
       orgConfig,
       setOrgConfig,
       isLive,

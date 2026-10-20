@@ -148,8 +148,16 @@ export const submitAttendance = (entries: AttendanceEntry[], config: OrgConfig):
 export async function pingScript(scriptUrl: string, apiKey: string): Promise<void> {
   const url = scriptUrl.trim();
   if (!url) throw new ApiError('Enter the Apps Script web app URL first', 'config');
-  if (!/^https:\/\/script\.google(usercontent)?\.com\//.test(url)) {
-    throw new ApiError('That doesn’t look like an Apps Script web app URL (should start with https://script.google.com/)', 'config');
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new ApiError('That doesn’t look like a valid URL', 'config');
+  }
+  // https is required (an Apps Script /exec URL always is); localhost is exempted so a
+  // self-hosted stand-in for testing isn't blocked by this check.
+  if (parsed.protocol !== 'https:' && parsed.hostname !== 'localhost') {
+    throw new ApiError('The URL must start with https://', 'config');
   }
   const params = new URLSearchParams({ action: 'ping' });
   if (apiKey) params.set('key', apiKey);

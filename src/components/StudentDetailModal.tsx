@@ -5,6 +5,7 @@ import { humanize } from '../lib/roster';
 import { localPhone, prettyPhone, whatsappNumber } from '../lib/phone';
 import { ageFromBirthday, formatDate } from '../lib/time';
 import { cn } from '../lib/cn';
+import { useApp } from '../context/AppContext';
 import { Avatar } from './Avatar';
 
 const CATEGORY_LABEL: Record<WeightCategory, { label: string; className: string }> = {
@@ -91,9 +92,10 @@ export function StudentDetailModal({ child, onClose }: StudentDetailModalProps) 
     };
   }, []);
 
+  const { phoneFormat } = useApp();
   const age = child.birthday ? ageFromBirthday(child.birthday) : undefined;
-  const primary = localPhone(child.contactPrimary);
-  const whatsapp = whatsappNumber(child.contactWhatsapp);
+  const primary = localPhone(child.contactPrimary, phoneFormat);
+  const whatsapp = whatsappNumber(child.contactWhatsapp, phoneFormat);
   const category = child.weightCategory ? CATEGORY_LABEL[child.weightCategory] : undefined;
 
   const linkClass =
@@ -155,7 +157,7 @@ export function StudentDetailModal({ child, onClose }: StudentDetailModalProps) 
                     className={cn(linkClass, 'bg-brand-600 text-white hover:bg-brand-700')}
                   >
                     <Phone className="h-5 w-5" aria-hidden="true" />
-                    {prettyPhone(child.contactPrimary)}
+                    {prettyPhone(child.contactPrimary, phoneFormat)}
                   </a>
                 )}
                 {whatsapp && (
@@ -166,7 +168,10 @@ export function StudentDetailModal({ child, onClose }: StudentDetailModalProps) 
                     className={cn(linkClass, 'bg-emerald-600 text-white hover:bg-emerald-700')}
                   >
                     <MessageCircle className="h-5 w-5" aria-hidden="true" />
-                    WhatsApp {whatsapp === whatsappNumber(child.contactPrimary) ? '' : prettyPhone(child.contactWhatsapp)}
+                    WhatsApp{' '}
+                    {whatsapp === whatsappNumber(child.contactPrimary, phoneFormat)
+                      ? ''
+                      : prettyPhone(child.contactWhatsapp, phoneFormat)}
                   </a>
                 )}
               </div>

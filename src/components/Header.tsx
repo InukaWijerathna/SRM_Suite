@@ -1,9 +1,9 @@
-import { useLayoutEffect, useRef } from 'react';
-import { ClipboardCheck, QrCode, Users, Wifi, WifiOff, type LucideIcon } from 'lucide-react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { ClipboardCheck, QrCode, Settings2, Users, Wifi, WifiOff, type LucideIcon } from 'lucide-react';
 import type { TabId } from '../types';
 import { useApp } from '../context/AppContext';
-import { apiMode } from '../services/api';
 import { cn } from '../lib/cn';
+import { Settings } from './Settings';
 import { SyncBar, SyncButton } from './SyncBar';
 
 interface TabDef {
@@ -25,8 +25,20 @@ interface HeaderProps {
 }
 
 export function Header({ tab, onTabChange }: HeaderProps) {
-  const { isOnline } = useApp();
+  const { isOnline, isLive, orgConfig, setupSeen, markSetupSeen } = useApp();
   const ref = useRef<HTMLElement>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+
+  // First-ever launch (nothing configured, instructions never shown): open Settings
+  // automatically so a new install isn't just a silent "Demo" badge with no next step.
+  useEffect(() => {
+    if (!setupSeen && !isLive) setSettingsOpen(true);
+  }, [setupSeen, isLive]);
+
+  const closeSettings = () => {
+    setSettingsOpen(false);
+    markSetupSeen();
+  };
 
   // Publish the header's height so sticky toolbars below it can offset themselves.
   useLayoutEffect(() => {
@@ -46,12 +58,14 @@ export function Header({ tab, onTabChange }: HeaderProps) {
         <div className="flex items-center gap-3 px-4 pb-2 pt-[max(0.5rem,env(safe-area-inset-top))]">
           <img src="/pwa-64x64.png" alt="" className="h-9 w-9 rounded-lg" />
           <div className="hidden min-w-0 sm:block">
-            <h1 className="truncate text-base font-bold leading-tight">Attendance &amp; Health</h1>
-            <p className="text-xs leading-tight text-brand-100">Student tracker</p>
+            <h1 className="truncate text-base font-bold leading-tight">{orgConfig.orgName || 'SRM Suite'}</h1>
+            <p className="text-xs leading-tight text-brand-100">
+              {orgConfig.orgName ? 'SRM Suite' : 'Student Record Manager'}
+            </p>
           </div>
-          {apiMode === 'mock' && (
+          {!isLive && (
             <span
-              title="Using demo data. Nothing is sent to Google Sheets."
+              title="Using demo data. Connect your Google Sheet in Settings to use real data."
               className="rounded-md bg-amber-300 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-950"
             >
               Demo
@@ -74,6 +88,14 @@ export function Header({ tab, onTabChange }: HeaderProps) {
               {isOnline ? 'Online' : 'Offline'}
             </span>
             <SyncButton />
+            <button
+              type="button"
+              onClick={() => setSettingsOpen(true)}
+              aria-label="Settings: connect your Google Sheet"
+              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-white/15 text-white hover:bg-white/25"
+            >
+              <Settings2 className="h-5 w-5" aria-hidden="true" />
+            </button>
           </div>
         </div>
 
@@ -105,6 +127,7 @@ export function Header({ tab, onTabChange }: HeaderProps) {
         </nav>
       </div>
       <SyncBar />
+      {settingsOpen && <Settings onClose={closeSettings} />}
     </header>
   );
 }

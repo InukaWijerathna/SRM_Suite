@@ -1,6 +1,8 @@
 # SRM Suite — Student Record Manager (PWA + Android)
 
-Offline-first attendance, QR check-in and health directory for ~553 students. React 18 + Vite + TypeScript + Tailwind, with Google Sheets as the database (through a small Apps Script web app). Ships two ways from the same code: a installable web PWA, and a native Android app (via Capacitor).
+Offline-first attendance, QR check-in and a student/health directory. React 18 + Vite + TypeScript + Tailwind, with each organization's own Google Sheet as the database (through a small Apps Script web app). Ships two ways from the same code: an installable web PWA, and a native Android app (via Capacitor).
+
+**One app build, any number of organizations.** No organization's Google Sheet URL is built into the app. Each install connects to its own sheet from inside the app (the gear icon → Settings), which also has step-by-step setup instructions and a one-tap blank-template download. That connection is stored on the device, can be changed or reset to demo data at any time, and a fresh install with nothing configured yet runs on generated demo data so it's usable immediately.
 
 ```bash
 npm install
@@ -41,11 +43,11 @@ Run `android:sync` again after any change to `src/`, `public/`, or `capacitor.co
 
 ### Notes
 
-- **Mock vs live data**: the Android build reads `.env` exactly like the web build does (`VITE_API_MODE`, `VITE_APPS_SCRIPT_URL`, `VITE_API_KEY` — see "Connecting the real sheet" below). Whatever mode is active when you run `android:sync` is baked into the app.
+- **Branding vs. the Sheet connection — two different things.** The app's own identity (home-screen icon, app name, Android package ID) is fixed at build time in `capacitor.config.ts` — that's the *product's* branding, same for every organization using this build. Which Google Sheet it talks to, and the organization name shown in its header, are entered at runtime through Settings and are **not** part of the build. Rebuilding is only needed to change the product's own branding, never to connect a new organization.
 - **Permissions**: `android/app/src/main/AndroidManifest.xml` declares `CAMERA` (QR scanning) and `VIBRATE` (scan feedback). Capacitor's WebView shows the standard Android permission prompt the first time the scanner asks for the camera — no extra code needed.
 - **App icon/splash**: generated from [public/icon.svg](public/icon.svg) via `resources/icon.png` and `resources/splash.png`. Regenerate both the PWA and Android assets after changing the source icon: `npm run generate-icons`.
 - **Signing a release build**: `android:release` produces an *unsigned* `.aab`. Follow Android's [app signing guide](https://developer.android.com/studio/publish/app-signing) to create a keystore and configure `android/app/build.gradle` before uploading to the Play Store. Do this once you're ready to publish — it's not needed for testing on a device.
-- **App ID**: set in `capacitor.config.ts` (`appId: 'org.attendancetracker.app'`). This becomes the Android package name and **cannot change after your first Play Store upload** — replace it with your own reverse-DNS id (e.g. `lk.gov.<office>.attendance`) before publishing.
+- **App ID**: set in `capacitor.config.ts` (`appId: 'com.srmsuite.app'`). This becomes the Android package name and **cannot change after your first Play Store upload** — replace it with your own reverse-DNS id if you're forking this for your own distribution.
 - The PWA's service worker is skipped inside the native app ([src/main.tsx](src/main.tsx)) — redundant once the assets are bundled in the APK, and app updates come from the Play Store instead.
 
 ## Google Sheet structure
@@ -68,23 +70,21 @@ How the app reads the data:
 - Phone numbers that Sheets stored as numbers (leading `0` dropped) are repaired for `tel:` and WhatsApp links. Sri Lanka (+94) is assumed.
 - `picture_ref` can be a Google Drive share link, an `https://` image URL, or a bare filename plus `VITE_PHOTO_BASE_URL`. Without a photo the app shows initials.
 
-## Connecting the real sheet (LIVE mode)
+## Connecting your organization's sheet (no rebuild needed)
 
-1. In the spreadsheet: **Extensions → Apps Script**, paste [apps-script/Code.gs](apps-script/Code.gs), save.
-2. Run `setup` once from the editor and approve the permissions (this also creates the `attendance_logs` tab if it's missing).
+Open the app and tap the gear icon in the header. **Settings** has step-by-step instructions built in ("First time setting this up?"), including a one-tap download of a blank, correctly-headed student sheet — the same steps are repeated here for reference:
+
+1. **Get a blank sheet.** Download it from Settings (or use `attendance-tracker-blank-template-v3.xlsx` / your own workbook), upload to Google Drive, open it, then **File → Save as Google Sheets**.
+2. In the spreadsheet: **Extensions → Apps Script**, paste [apps-script/Code.gs](apps-script/Code.gs), save. Run `setup` once from the editor and approve the permissions (this also creates the `attendance_logs` tab if it's missing).
 3. **Deploy → New deployment → Web app**. Execute as **Me**, access **Anyone**. Copy the `/exec` URL.
 4. Optional: in **Project settings → Script properties** add `API_KEY` with any long random string.
-5. Copy `.env.example` to `.env` and set:
+5. Back in the app's Settings: paste the URL (and the API key, if you set one), tap **Test connection**, then **Save**.
 
-   ```
-   VITE_API_MODE=live
-   VITE_APPS_SCRIPT_URL=https://script.google.com/macros/s/.../exec
-   VITE_API_KEY=<same value as API_KEY, if you set one>
-   ```
+That's it — no `.env`, no rebuild, no redeploying the app. The connection is saved on that device; **Disconnect & use demo data** in Settings clears it and returns to demo data at any time. Switching from one organization's sheet to another's (or to/from demo data) also clears that device's cached roster and any unsynced attendance, so one organization's data can never leak into another's view or get synced to the wrong sheet.
 
-Without `.env` (or with `VITE_API_MODE=mock`) the app runs on 553 generated demo students and stores attendance in the browser only; a yellow **Demo** tag shows in the header.
+`.env` still exists purely as a **local development convenience** (see `.env.example`): if `VITE_APPS_SCRIPT_URL` is set, it pre-fills Settings the first time the app runs on a device with nothing saved yet, so `npm run dev` doesn't need re-typing credentials every session. **Leave it unset in any build meant for other organizations to install** — it has no effect once something has actually been saved through Settings, but setting it defeats the "one build, no baked-in sheet" model for a build you intend to distribute.
 
-> **Privacy:** the roster contains children's names, addresses, phone numbers and medical conditions, and an "Anyone" web app URL will serve it to whoever has the link. `VITE_API_KEY` ships inside the JavaScript bundle, so it deters casual access only. If the link could leak, put the site behind Cloudflare Access (or similar) and keep the Apps Script URL private.
+> **Privacy:** the roster contains children's names, addresses, phone numbers and medical conditions, and an "Anyone" web app URL will serve it to whoever has the link. The API key ships inside the Settings screen's saved config / the dev-convenience env var, so it deters casual access only. If the link could leak, put the Sheet's Apps Script behind additional access controls and keep the URL private — share it only through Settings, not in the app's source or a public build.
 
 ## Registering students with a Google Form
 
@@ -116,7 +116,7 @@ Notes:
 
 ## Deploying
 
-Cloudflare Pages or Vercel: build command `npm run build`, output directory `dist`, set the `VITE_*` variables in the project settings. The PWA (manifest, icons, service worker) is generated by `vite-plugin-pwa`. To regenerate icons from [public/icon.svg](public/icon.svg): `npm run generate-icons`.
+Cloudflare Pages or Vercel: build command `npm run build`, output directory `dist`. No `VITE_*` variables need to be set — every organization connects its own sheet from inside the deployed app (Settings), not at deploy time. The PWA (manifest, icons, service worker) is generated by `vite-plugin-pwa`. To regenerate icons from [public/icon.svg](public/icon.svg): `npm run generate-icons`.
 
 ## Layout
 

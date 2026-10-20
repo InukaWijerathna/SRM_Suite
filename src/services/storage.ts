@@ -75,8 +75,10 @@ export const saveSyncedToday = (marks: SyncedMarks) =>
 export interface Prefs {
   autoSync: boolean;
   soundOn: boolean;
+  /** True once the Settings screen's first-launch setup instructions have been shown. */
+  setupSeen: boolean;
 }
-const DEFAULT_PREFS: Prefs = { autoSync: false, soundOn: true };
+const DEFAULT_PREFS: Prefs = { autoSync: false, soundOn: true, setupSeen: false };
 
 export const loadPrefs = (): Prefs => ({ ...DEFAULT_PREFS, ...read<Partial<Prefs>>(KEYS.prefs) });
 export const savePrefs = (prefs: Prefs) => write(KEYS.prefs, prefs);
