@@ -1,0 +1,10 @@
+node_modules
+dist
+dist-live
+dev-dist
+.env
+.env.local
+*.log
+.tools
+*.apk
+*.aab

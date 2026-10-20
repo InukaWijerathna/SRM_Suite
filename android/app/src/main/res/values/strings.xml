@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">SRM Suite</string>
+    <string name="title_activity_main">SRM Suite</string>
+    <string name="package_name">com.srmsuite.app</string>
+    <string name="custom_url_scheme">com.srmsuite.app</string>
+</resources>

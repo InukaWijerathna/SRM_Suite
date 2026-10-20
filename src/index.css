@@ -1,0 +1,49 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    -webkit-tap-highlight-color: transparent;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    @apply bg-slate-50 text-slate-900 antialiased;
+    overscroll-behavior-y: none;
+  }
+
+  button,
+  [role='tab'] {
+    touch-action: manipulation; /* no 300ms tap delay / double-tap zoom on buttons */
+  }
+
+  :focus-visible {
+    outline: 2px solid theme('colors.brand.600');
+    outline-offset: 2px;
+  }
+}
+
+/* html5-qrcode injects its own <video>; make it fill the square viewport. */
+#qr-reader {
+  border: none !important;
+}
+#qr-reader video {
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: cover;
+}
+#qr-reader canvas {
+  display: none !important;
+}
+#qr-shaded-region {
+  display: none !important; /* we draw our own targeting frame */
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-scan-line,
+  .animate-slide-up,
+  .animate-fade-in {
+    animation: none !important;
+  }
+}
