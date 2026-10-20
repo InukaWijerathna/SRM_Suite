@@ -3,6 +3,8 @@ import { LoaderCircle } from 'lucide-react';
 import { AppProvider, useApp } from './context/AppContext';
 import type { TabId } from './types';
 import { Header } from './components/Header';
+import { BottomNav } from './components/BottomNav';
+import { Settings } from './components/Settings';
 import { Login } from './components/Login';
 import { StudentDirectory } from './components/StudentDirectory';
 import { AttendanceList } from './components/AttendanceList';
@@ -17,6 +19,7 @@ function Shell() {
   // The scanner is loaded on first visit, then kept mounted (hidden) so its camera can be
   // stopped cleanly when the tab changes. The camera itself only runs while it is active.
   const [scannerOpened, setScannerOpened] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   const changeTab = (next: TabId) => {
     if (next === 'scanner') setScannerOpened(true);
@@ -30,8 +33,13 @@ function Shell() {
 
   return (
     <div className="min-h-dvh">
-      <Header tab={tab} onTabChange={changeTab} />
-      <main id="panel" role="tabpanel" aria-labelledby={`tab-${tab}`} className="mx-auto max-w-3xl">
+      <Header tab={tab} />
+      <main
+        id="panel"
+        role="tabpanel"
+        aria-labelledby={`tab-${tab}`}
+        className="mx-auto max-w-3xl pb-[calc(4.5rem+env(safe-area-inset-bottom))]"
+      >
         {tab === 'directory' && <StudentDirectory />}
         {tab === 'attendance' && <AttendanceList />}
         {scannerOpened && (
@@ -46,6 +54,8 @@ function Shell() {
           </Suspense>
         )}
       </main>
+      <BottomNav tab={tab} onTabChange={changeTab} onSettings={() => setSettingsOpen(true)} />
+      {settingsOpen && <Settings onClose={() => setSettingsOpen(false)} />}
     </div>
   );
 }

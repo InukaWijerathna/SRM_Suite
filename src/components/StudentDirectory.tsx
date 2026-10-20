@@ -143,14 +143,22 @@ export function StudentDirectory() {
         })}
       </div>
 
-      <p className="mb-2 mt-2 text-xs text-slate-500" role="status">
-        Showing {results.length} of {students.length} students
-      </p>
+      <div
+        role="status"
+        className="mt-2 flex items-center justify-between rounded-t-xl bg-gradient-to-r from-brand-600 to-brand-500 px-3.5 py-2 text-xs font-bold uppercase tracking-wide text-white"
+      >
+        <span>Student Directory</span>
+        <span className="normal-case tracking-normal tabular-nums">
+          Showing {results.length} of {students.length} students
+        </span>
+      </div>
 
       {results.length === 0 ? (
-        <p className="mt-12 text-center text-slate-500">No students match your search.</p>
+        <p className="rounded-b-xl bg-white py-12 text-center text-slate-500 shadow-sm ring-1 ring-slate-200">
+          No students match your search.
+        </p>
       ) : (
-        <ul className="space-y-2.5">
+        <ul className="space-y-2.5 rounded-b-xl bg-white p-2.5 shadow-sm ring-1 ring-slate-200">
           {results.map((child) => (
             <li key={child.childId}>
               <StudentCard child={child} onOpen={setSelected} />
