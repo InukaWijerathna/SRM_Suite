@@ -76,9 +76,10 @@ function doGet(e) {
         master: readRows_(SHEETS.master),
         health: readRows_(SHEETS.health, true),
         generatedAt: new Date().toISOString(),
+        loginRequired: loginConfigured_(),
       };
     }
-    if (action === 'ping') return { ok: true };
+    if (action === 'ping') return { ok: true, loginRequired: loginConfigured_() };
     throw new Error('Unknown action: ' + action);
   });
 }
@@ -244,6 +245,26 @@ function firstIndex_(list, predicate) {
 //   3. It will prompt for a username and a new password, hash the password, and write the
 //      hash to login_credentials (creating the tab and the row if they don't exist yet).
 // The sheet only ever stores the hash — the password you type is never written anywhere.
+
+/**
+ * Whether this sheet actually has anyone to log in as. login_credentials is optional — a
+ * sheet with no tab, or a tab with headers but zero rows, means "skip login entirely" rather
+ * than "nobody can ever get in" (which is what login_'s fail-closed check would otherwise
+ * mean the moment the app required a signed-in session for every connected sheet).
+ */
+function loginConfigured_() {
+  var sheet = getSpreadsheet_().getSheetByName(SHEETS.logins);
+  if (!sheet) return false;
+  var headers = readHeaders_(sheet);
+  var userCol = headers.indexOf('username');
+  if (userCol === -1) return false;
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) return false;
+  var ids = sheet.getRange(2, userCol + 1, lastRow - 1, 1).getValues();
+  return ids.some(function (row) {
+    return String(row[0]).trim() !== '';
+  });
+}
 
 /** Checks a username/password against login_credentials. Never reveals which part was wrong. */
 function login_(username, password) {

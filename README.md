@@ -2,11 +2,11 @@
 
 Offline-first attendance, QR check-in and a student/health directory. React 18 + Vite + TypeScript + Tailwind, with each organization's own Google Sheet as the database (through a small Apps Script web app). Ships two ways from the same code: an installable web PWA, and a native Android app (via Capacitor).
 
-**One app build, any number of organizations.** No organization's Google Sheet URL is built into the app. Each install connects to its own sheet from inside the app (the gear icon → Settings), which also has step-by-step setup instructions and a one-tap blank-template download. That connection is stored on the device, can be changed or reset to demo data at any time, and a fresh install with nothing configured yet runs on generated demo data so it's usable immediately.
+**One app build, any number of organizations.** No organization's Google Sheet URL is built into the app. Each install connects to its own sheet from inside the app (the gear icon → Settings), which also has step-by-step setup instructions and a one-tap blank-template download. That connection is stored on the device and can be changed to a different sheet at any time; a fresh install walks you through connecting a sheet before it can be used.
 
 ```bash
 npm install
-npm run dev        # http://localhost:5173, demo data (MOCK mode)
+npm run dev        # http://localhost:5173 — set VITE_APPS_SCRIPT_URL in .env to seed a sheet for local dev
 npm run build      # type-check + production build into dist/
 npm run preview    # serve the build; the service worker / offline mode only runs here
 ```
@@ -80,7 +80,7 @@ Open the app and tap the gear icon in the header. **Settings** has step-by-step 
 4. Optional: in **Project settings → Script properties** add `API_KEY` with any long random string.
 5. Back in the app's Settings: paste the URL (and the API key, if you set one), tap **Test connection**, then **Save**.
 
-That's it — no `.env`, no rebuild, no redeploying the app. The connection is saved on that device; **Disconnect & use demo data** in Settings clears it and returns to demo data at any time. Switching from one organization's sheet to another's (or to/from demo data) also clears that device's cached roster and any unsynced attendance, so one organization's data can never leak into another's view or get synced to the wrong sheet.
+That's it — no `.env`, no rebuild, no redeploying the app. The connection is saved on that device; re-opening Settings and saving a different URL switches it. Switching from one organization's sheet to another's also clears that device's cached roster and any unsynced attendance, so one organization's data can never leak into another's view or get synced to the wrong sheet.
 
 `.env` still exists purely as a **local development convenience** (see `.env.example`): if `VITE_APPS_SCRIPT_URL` is set, it pre-fills Settings the first time the app runs on a device with nothing saved yet, so `npm run dev` doesn't need re-typing credentials every session. **Leave it unset in any build meant for other organizations to install** — it has no effect once something has actually been saved through Settings, but setting it defeats the "one build, no baked-in sheet" model for a build you intend to distribute.
 
@@ -123,11 +123,10 @@ Cloudflare Pages or Vercel: build command `npm run build`, output directory `dis
 ```
 apps-script/Code.gs        Google Apps Script backend (roster + attendance API)
 apps-script/Registration.gs Google Form registration, QR codes, "SRM Suite" menu
-src/services/api.ts        MOCK / LIVE data access
+src/services/api.ts        Google Apps Script data access
 src/services/storage.ts    localStorage layer (roster, queue, prefs)
 src/services/audio.ts      Web Audio beeps + vibration
 src/context/AppContext.tsx roster, attendance queue, sync state
 src/lib/                   sheet-row join/normalisation, phone, photo, health rules
-src/data/mockData.ts       553 demo students in sheet row format
 src/components/            Header, SyncBar, StudentDirectory/Card/DetailModal, AttendanceList, QRScanner
 ```

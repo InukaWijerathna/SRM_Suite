@@ -1,9 +1,8 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { Settings2, Wifi, WifiOff } from 'lucide-react';
+import { useLayoutEffect, useRef } from 'react';
+import { Wifi, WifiOff } from 'lucide-react';
 import type { TabId } from '../types';
 import { useApp } from '../context/AppContext';
 import { cn } from '../lib/cn';
-import { Settings } from './Settings';
 import { SyncBar, SyncButton } from './SyncBar';
 
 interface HeaderProps {
@@ -11,20 +10,8 @@ interface HeaderProps {
 }
 
 export function Header({ tab }: HeaderProps) {
-  const { isOnline, isLive, orgConfig, setupSeen, markSetupSeen } = useApp();
+  const { isOnline, isLive, orgConfig } = useApp();
   const ref = useRef<HTMLElement>(null);
-  const [settingsOpen, setSettingsOpen] = useState(false);
-
-  // First-ever launch (nothing configured, instructions never shown): open Settings
-  // automatically so a new install isn't just a silent "Demo" badge with no next step.
-  useEffect(() => {
-    if (!setupSeen && !isLive) setSettingsOpen(true);
-  }, [setupSeen, isLive]);
-
-  const closeSettings = () => {
-    setSettingsOpen(false);
-    markSetupSeen();
-  };
 
   // Publish the header's height so sticky toolbars below it can offset themselves.
   useLayoutEffect(() => {
@@ -53,7 +40,7 @@ export function Header({ tab }: HeaderProps) {
           <div className="flex shrink-0 items-center gap-2">
             {!isLive && (
               <span className="rounded-md bg-amber-300 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-950">
-                Demo
+                Not connected
               </span>
             )}
             <span
@@ -71,19 +58,10 @@ export function Header({ tab }: HeaderProps) {
               {isOnline ? 'Online' : 'Offline'}
             </span>
             <SyncButton />
-            <button
-              type="button"
-              onClick={() => setSettingsOpen(true)}
-              aria-label="Settings: connect your Google Sheet"
-              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white/15 text-white hover:bg-white/25"
-            >
-              <Settings2 className="h-5 w-5" aria-hidden="true" />
-            </button>
           </div>
         </div>
       </div>
       <SyncBar />
-      {settingsOpen && <Settings onClose={closeSettings} />}
     </header>
   );
 }

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Capacitor } from '@capacitor/core';
-import { Filesystem, Directory } from '@capacitor/filesystem';
+import { Filesystem, Directory, Encoding } from '@capacitor/filesystem';
 import { Share } from '@capacitor/share';
 import {
   CircleAlert,
@@ -15,8 +15,8 @@ import {
   LoaderCircle,
   LogOut,
   Phone,
-  RotateCcw,
   Settings2,
+  Upload,
   X,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
@@ -61,8 +61,8 @@ interface SettingsProps {
 
 /**
  * Where each organization connects its own Google Sheet. Nothing here is built into the app
- * — it's entered once, kept on-device (see services/storage.ts), and can be changed or reset
- * to demo data at any time without a new app build.
+ * — it's entered once, kept on-device (see services/storage.ts), and can be changed to a
+ * different sheet at any time without a new app build.
  */
 export function Settings({ onClose }: SettingsProps) {
   const { orgConfig, setOrgConfig, isLive, username, logout } = useApp();
@@ -117,6 +117,8 @@ export function Settings({ onClose }: SettingsProps) {
   }, [onClose]);
 
   const [templateError, setTemplateError] = useState<string | null>(null);
+  const [configMessage, setConfigMessage] = useState<{ state: 'ok' | 'error'; text: string } | null>(null);
+  const importInputRef = useRef<HTMLInputElement>(null);
 
   // The <a download> attribute works in a browser, but Capacitor's Android WebView has no
   // download manager wired up for it and silently does nothing. On native, fetch the bundled
@@ -143,6 +145,69 @@ export function Settings({ onClose }: SettingsProps) {
       await Share.share({ title: 'SRM Suite blank student sheet', url: written.uri });
     } catch {
       setTemplateError('Could not open the share sheet — try again, or download it from a browser instead.');
+    }
+  };
+
+  // Lets an admin back up or move a sheet connection between devices without retyping the
+  // script URL/API key. Exports exactly what's currently in the form (not necessarily saved
+  // yet), so you can review/tweak before exporting.
+  const buildConfigExport = () =>
+    JSON.stringify(
+      {
+        srmSuiteConnection: 1 as const,
+        orgName: orgName.trim(),
+        scriptUrl: scriptUrl.trim(),
+        apiKey: apiKey.trim(),
+        countryCode: countryCode.replace(/\D/g, '') || '94',
+        nationalLength: Math.max(4, Math.min(15, Number(nationalLength) || 9)),
+      },
+      null,
+      2,
+    );
+
+  const exportFilename = () => {
+    const slug = orgName.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+    return `${slug || 'srm-suite'}-connection.json`;
+  };
+
+  const handleExportConfig = async () => {
+    setConfigMessage(null);
+    const json = buildConfigExport();
+    const filename = exportFilename();
+    if (Capacitor.isNativePlatform()) {
+      try {
+        const written = await Filesystem.writeFile({ path: filename, data: json, directory: Directory.Cache, encoding: Encoding.UTF8 });
+        await Share.share({ title: 'SRM Suite Sheet connection', url: written.uri });
+      } catch {
+        setConfigMessage({ state: 'error', text: 'Could not open the share sheet — try again.' });
+      }
+      return;
+    }
+    const blob = new Blob([json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleImportFile = async (file: File) => {
+    setConfigMessage(null);
+    try {
+      const parsed = JSON.parse(await file.text());
+      if (typeof parsed !== 'object' || parsed === null || typeof parsed.scriptUrl !== 'string') {
+        throw new Error('not a connection file');
+      }
+      setOrgName(typeof parsed.orgName === 'string' ? parsed.orgName : '');
+      setScriptUrl(parsed.scriptUrl);
+      setApiKey(typeof parsed.apiKey === 'string' ? parsed.apiKey : '');
+      setCountryCode(typeof parsed.countryCode === 'string' ? parsed.countryCode : '94');
+      setNationalLength(String(Number(parsed.nationalLength) || 9));
+      setTestState({ state: 'idle' });
+      setConfigMessage({ state: 'ok', text: 'Loaded — review the fields below, then Save to connect.' });
+    } catch {
+      setConfigMessage({ state: 'error', text: 'That file is not a valid SRM Suite connection export.' });
     }
   };
 
@@ -173,15 +238,6 @@ export function Settings({ onClose }: SettingsProps) {
     setTimeout(onClose, 650);
   };
 
-  const handleUseDemo = () => {
-    setOrgName('');
-    setScriptUrl('');
-    setApiKey('');
-    setOrgConfig({ orgName: '', scriptUrl: '', apiKey: '', countryCode: '94', nationalLength: 9 });
-    setSaved(true);
-    setTimeout(onClose, 650);
-  };
-
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center sm:p-4">
       <div className="absolute inset-0 animate-fade-in bg-slate-900/60" onClick={onClose} aria-hidden="true" />
@@ -201,7 +257,7 @@ export function Settings({ onClose }: SettingsProps) {
               Connect your Google Sheet
             </h2>
             <p className="text-sm text-slate-500">
-              {isLive ? 'Connected' : 'Currently showing demo data'} — this device only, nothing is built into the app.
+              {isLive ? 'Connected' : 'Not connected yet'} — this device only, nothing is built into the app.
             </p>
           </div>
           <button
@@ -417,6 +473,60 @@ export function Settings({ onClose }: SettingsProps) {
               </span>
             </div>
 
+            <div className="mt-5 border-t border-slate-100 pt-4">
+              <span className="text-sm font-semibold text-slate-700">Backup this connection</span>
+              <p className="mt-1 text-xs text-slate-500">
+                Export the fields above as a file to move this connection to another device, or re-import it here
+                later. It contains your API key — keep it as private as the sheet itself.
+              </p>
+              <div className="mt-2 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => void handleExportConfig()}
+                  disabled={!scriptUrl.trim()}
+                  className="flex min-h-touch items-center justify-center gap-2 rounded-xl bg-white px-4 text-sm font-semibold text-slate-700 ring-1 ring-inset ring-slate-300 transition hover:bg-slate-50 disabled:opacity-50"
+                >
+                  <Download className="h-4 w-4" aria-hidden="true" />
+                  Export
+                </button>
+                <button
+                  type="button"
+                  onClick={() => importInputRef.current?.click()}
+                  className="flex min-h-touch items-center justify-center gap-2 rounded-xl bg-white px-4 text-sm font-semibold text-slate-700 ring-1 ring-inset ring-slate-300 transition hover:bg-slate-50"
+                >
+                  <Upload className="h-4 w-4" aria-hidden="true" />
+                  Import
+                </button>
+                <input
+                  ref={importInputRef}
+                  type="file"
+                  accept="application/json,.json"
+                  className="hidden"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    e.target.value = '';
+                    if (file) void handleImportFile(file);
+                  }}
+                />
+              </div>
+              {configMessage && (
+                <p
+                  className={cn(
+                    'mt-2 flex items-start gap-1.5 text-sm font-medium',
+                    configMessage.state === 'ok' ? 'text-emerald-700' : 'text-rose-700',
+                  )}
+                  role={configMessage.state === 'ok' ? 'status' : 'alert'}
+                >
+                  {configMessage.state === 'ok' ? (
+                    <CircleCheck className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+                  ) : (
+                    <CircleAlert className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+                  )}
+                  {configMessage.text}
+                </p>
+              )}
+            </div>
+
             <div className="mt-6 flex flex-col gap-2">
               <button
                 type="submit"
@@ -428,16 +538,6 @@ export function Settings({ onClose }: SettingsProps) {
                 {saved ? <CircleCheck className="h-5 w-5" aria-hidden="true" /> : null}
                 {saved ? 'Saved' : 'Save'}
               </button>
-              {isLive && (
-                <button
-                  type="button"
-                  onClick={handleUseDemo}
-                  className="flex min-h-touch items-center justify-center gap-2 rounded-xl bg-white px-5 text-sm font-semibold text-slate-600 ring-1 ring-inset ring-slate-300 transition hover:bg-slate-50"
-                >
-                  <RotateCcw className="h-4 w-4" aria-hidden="true" />
-                  Disconnect &amp; use demo data instead
-                </button>
-              )}
               {username && (
                 <div className="flex items-center justify-between gap-3 rounded-xl bg-slate-50 px-4 py-3 ring-1 ring-slate-200">
                   <span className="text-sm text-slate-600">

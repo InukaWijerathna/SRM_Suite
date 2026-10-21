@@ -131,12 +131,12 @@ export interface RosterStatus {
 /**
  * Per-install connection to one organization's Google Sheet, entered through the Settings
  * screen and kept on-device only — never built into the app binary, so the same install can
- * be re-pointed at a different sheet (or reset to demo data) without a new build.
+ * be re-pointed at a different sheet without a new build.
  */
 export interface OrgConfig {
   /** Shown in the header once set. Blank until the admin configures the app. */
   orgName: string;
-  /** The Apps Script web app's /exec URL. Blank = demo data (MOCK mode). */
+  /** The Apps Script web app's /exec URL. Blank until the app is configured. */
   scriptUrl: string;
   /** Optional: must match the API_KEY script property, if the deployment set one. */
   apiKey: string;

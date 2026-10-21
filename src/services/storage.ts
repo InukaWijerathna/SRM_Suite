@@ -1,4 +1,4 @@
-import type { AttendanceEntry, AttendanceLogRow, AttendanceStatus, ChildRecord, OrgConfig, Session } from '../types';
+import type { AttendanceEntry, AttendanceStatus, ChildRecord, OrgConfig, Session } from '../types';
 import { dayKey } from '../lib/time';
 
 // Everything the app needs to keep working with zero connectivity lives in localStorage:
@@ -9,7 +9,6 @@ const KEYS = {
   queue: 'sat.queue.v1',
   synced: 'sat.synced.v1',
   prefs: 'sat.prefs.v1',
-  mockLogs: 'sat.mock.attendance_logs.v1',
   orgConfig: 'sat.org_config.v1',
   session: 'sat.session.v1',
 } as const;
@@ -84,15 +83,10 @@ const DEFAULT_PREFS: Prefs = { autoSync: false, soundOn: true, setupSeen: false 
 export const loadPrefs = (): Prefs => ({ ...DEFAULT_PREFS, ...read<Partial<Prefs>>(KEYS.prefs) });
 export const savePrefs = (prefs: Prefs) => write(KEYS.prefs, prefs);
 
-// ---- MOCK mode's stand-in for the attendance_logs tab ---------------------------------
-
-export const loadMockLogs = (): AttendanceLogRow[] => read<AttendanceLogRow[]>(KEYS.mockLogs) ?? [];
-export const saveMockLogs = (rows: AttendanceLogRow[]) => write(KEYS.mockLogs, rows);
-
 // ---- Organization config (the Google Sheet connection) --------------------------------
 // Kept on-device only, entered through the Settings screen — never built into the app
-// binary, so the same install works for any organization and can be re-pointed or reset
-// to demo data without a new build.
+// binary, so the same install works for any organization and can be re-pointed to a
+// different sheet without a new build.
 
 const EMPTY_CONFIG: OrgConfig = { orgName: '', scriptUrl: '', apiKey: '', countryCode: '94', nationalLength: 9 };
 
@@ -121,9 +115,9 @@ export const saveOrgConfig = (config: OrgConfig) => write(KEYS.orgConfig, config
 
 /**
  * Wipes the cached roster, attendance queue, today's synced marks and the signed-in session
- * — called when the Sheet connection changes (a different organization, or switching to/from
- * demo data), so one organization's data (or login) can never linger into another's view or
- * get synced to the wrong sheet. Preferences and the MOCK sandbox log are left alone.
+ * — called when the Sheet connection changes to a different organization, so one
+ * organization's data (or login) can never linger into another's view or get synced to the
+ * wrong sheet. Preferences are left alone.
  */
 export function clearOrgScopedData() {
   try {

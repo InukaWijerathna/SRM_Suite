@@ -24,7 +24,7 @@ import type {
 } from '../types';
 import {
   ApiError,
-  apiModeOf,
+  checkLoginRequired,
   fetchRoster,
   login as apiLogin,
   submitAttendance,
@@ -99,8 +99,8 @@ interface AppContextValue {
   setOrgConfig: (config: OrgConfig) => void;
   isLive: boolean;
   phoneFormat: PhoneFormat;
-  // Session: who's signed in on this device. Demo data never requires a login.
-  /** True once a real sheet is connected: that's when login starts being required. */
+  // Session: who's signed in on this device.
+  /** True once a sheet is connected: that's when login starts being required. */
   requiresLogin: boolean;
   username: string | null;
   /** 'viewer' is read-only; null until signed in or when the sheet has no Role column (= editor). */
@@ -259,8 +259,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
     // discard the stale old response, leaving nothing to ever resolve "loading".
     const forced = overrideConfig !== undefined;
     if (!forced && refreshingRoster.current) return;
-    refreshingRoster.current = true;
     const config = overrideConfig ?? latest.current.orgConfig;
+    if (!config.scriptUrl.trim()) {
+      // Nothing to fetch yet — the first-launch Settings screen (or the gear icon) is how
+      // this gets filled in, not a fallback dataset.
+      setRosterStatus({ state: 'error', error: 'Connect your Google Sheet in Settings to get started.' });
+      return;
+    }
+    refreshingRoster.current = true;
     const generation = rosterGeneration.current;
     setRosterStatus((s) => (s.state === 'ready' ? s : { state: 'loading' }));
     try {
@@ -326,8 +332,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
     await apiUpdateStudent(childId, { master, health }, latest.current.orgConfig);
 
-    // Reflect the edit locally right away rather than waiting on a full resync — in MOCK
-    // mode this IS the write (there's no sheet), in LIVE mode it's just avoiding a round trip.
+    // Reflect the edit locally right away rather than waiting on a full resync, avoiding a
+    // round trip to re-fetch the whole roster just to see the one row we already know changed.
     const conditions = conditionColumns
       .filter((c) => edit.conditionKeys[c.key])
       .map((c) => c.label)
@@ -450,9 +456,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
         const sheetChanged = next.scriptUrl.trim() !== prev.scriptUrl.trim();
         saveOrgConfig(next);
         if (sheetChanged) {
-          // A different sheet (or switching to/from demo data): the previous one's roster,
-          // queue and synced marks are not valid here and must never leak into the new view
-          // or get synced to the wrong place.
+          // A different sheet: the previous one's roster, queue and synced marks are not
+          // valid here and must never leak into the new view or get synced to the wrong place.
           rosterGeneration.current += 1;
           clearOrgScopedData();
           dispatch({ type: 'reset' });
@@ -467,11 +472,34 @@ export function AppProvider({ children }: { children: ReactNode }) {
     [refreshRoster],
   );
 
-  const isLive = apiModeOf(orgConfig) === 'live';
+  const isLive = !!orgConfig.scriptUrl.trim();
   const phoneFormat = useMemo<PhoneFormat>(
     () => ({ countryCode: orgConfig.countryCode || '94', nationalLength: orgConfig.nationalLength || 9 }),
     [orgConfig.countryCode, orgConfig.nationalLength],
   );
+
+  // ---- login_credentials is optional per-sheet: ask the sheet whether anyone's actually
+  // registered there rather than assuming every connected sheet demands a login. Defaults to
+  // false (no gate) until this resolves, so the app never gets stuck showing a login screen
+  // nobody can pass for a sheet that was never meant to require one.
+  const [loginRequired, setLoginRequired] = useState(false);
+  useEffect(() => {
+    if (!isLive) {
+      setLoginRequired(false);
+      return;
+    }
+    let cancelled = false;
+    checkLoginRequired(orgConfig)
+      .then((required) => {
+        if (!cancelled) setLoginRequired(required);
+      })
+      .catch(() => {
+        if (!cancelled) setLoginRequired(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isLive, orgConfig]);
 
   // ---- session (who's logged in)
   const login = useCallback(
@@ -524,7 +552,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setOrgConfig,
       isLive,
       phoneFormat,
-      requiresLogin: isLive,
+      requiresLogin: isLive && loginRequired,
       username: session.username,
       role: session.role,
       login,
@@ -551,6 +579,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setOrgConfig,
       isLive,
       phoneFormat,
+      loginRequired,
       session,
       login,
       logout,

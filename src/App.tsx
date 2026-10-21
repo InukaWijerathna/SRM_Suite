@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useState } from 'react';
 import { LoaderCircle } from 'lucide-react';
 import { AppProvider, useApp } from './context/AppContext';
 import type { TabId } from './types';
@@ -20,6 +20,18 @@ function Shell() {
   // stopped cleanly when the tab changes. The camera itself only runs while it is active.
   const [scannerOpened, setScannerOpened] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const { isLive, setupSeen, markSetupSeen } = useApp();
+
+  // First-ever launch (nothing configured, instructions never shown): open Settings
+  // automatically so a new install isn't just a silent "Not connected" badge with no next step.
+  useEffect(() => {
+    if (!setupSeen && !isLive) setSettingsOpen(true);
+  }, [setupSeen, isLive]);
+
+  const closeSettings = () => {
+    setSettingsOpen(false);
+    markSetupSeen();
+  };
 
   const changeTab = (next: TabId) => {
     if (next === 'scanner') setScannerOpened(true);
@@ -55,7 +67,7 @@ function Shell() {
         )}
       </main>
       <BottomNav tab={tab} onTabChange={changeTab} onSettings={() => setSettingsOpen(true)} />
-      {settingsOpen && <Settings onClose={() => setSettingsOpen(false)} />}
+      {settingsOpen && <Settings onClose={closeSettings} />}
     </div>
   );
 }

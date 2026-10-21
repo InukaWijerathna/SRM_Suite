@@ -1,17 +1,10 @@
 import type { AttendanceEntry, AttendanceLogRow, OrgConfig, Role, RosterPayload, StudentPatch, SubmitResult } from '../types';
-import { loadMockLogs, saveMockLogs } from './storage';
 
 /**
- * Data access for the Google Sheet. Which mode is used is decided per call from the
- * `OrgConfig` the caller passes in (itself read from the Settings screen, not a build-time
- * env var) — so the same app build serves any organization, and switching sheets or
- * resetting to demo data never needs a rebuild.
- *
- *  - mock (no scriptUrl configured): simulated latency; attendance is written to
- *    localStorage, standing in for the attendance_logs tab.
- *  - live (scriptUrl configured): GET/POST against the Google Apps Script web app in
- *    /apps-script/Code.gs, which keeps the Google credentials server-side instead of in the
- *    browser bundle.
+ * Data access for the Google Sheet. The `OrgConfig` the caller passes in (read from the
+ * Settings screen, not a build-time env var) is what makes the same app build serve any
+ * organization — GET/POST against the Google Apps Script web app in /apps-script/Code.gs,
+ * which keeps the Google credentials server-side instead of in the browser bundle.
  *
  * Wire format (both directions use the sheet's own column names):
  *   GET  ?action=roster[&key=..]  ->  { ok, master: Row[], health: Row[] }
@@ -19,13 +12,7 @@ import { loadMockLogs, saveMockLogs } from './storage';
  *                                 ->  { ok, appended, duplicates }
  */
 
-export type ApiMode = 'mock' | 'live';
-
-export const apiModeOf = (config: Pick<OrgConfig, 'scriptUrl'>): ApiMode =>
-  config.scriptUrl.trim() ? 'live' : 'mock';
-
 const REQUEST_TIMEOUT_MS = 30_000;
-const MOCK_LATENCY_MS = { roster: 900, submit: 700 };
 
 export class ApiError extends Error {
   constructor(
@@ -36,8 +23,6 @@ export class ApiError extends Error {
     this.name = 'ApiError';
   }
 }
-
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function assertOnline() {
   if (typeof navigator !== 'undefined' && navigator.onLine === false) {
@@ -53,28 +38,7 @@ const toLogRow = (e: AttendanceEntry): AttendanceLogRow => ({
   attendance_status: e.status,
 });
 
-// ---- MOCK -----------------------------------------------------------------------------
-
-async function mockFetchRoster(): Promise<RosterPayload> {
-  await sleep(MOCK_LATENCY_MS.roster);
-  assertOnline();
-  const { mockMasterRows, mockHealthRows } = await import('../data/mockData');
-  return { master: mockMasterRows, health: mockHealthRows };
-}
-
-async function mockSubmit(rows: AttendanceLogRow[]): Promise<SubmitResult> {
-  await sleep(MOCK_LATENCY_MS.submit);
-  assertOnline();
-  const existing = loadMockLogs();
-  const seen = new Set(existing.map((r) => r.log_id));
-  const fresh = rows.filter((r) => !seen.has(r.log_id));
-  if (!saveMockLogs([...existing, ...fresh])) {
-    throw new ApiError('Browser storage is full', 'server');
-  }
-  return { appended: fresh.length, duplicates: rows.length - fresh.length };
-}
-
-// ---- LIVE (Google Apps Script web app) ------------------------------------------------
+// ---- Google Apps Script web app --------------------------------------------------------
 
 async function callScript<T>(
   scriptUrl: string,
@@ -163,35 +127,23 @@ async function liveLogin(config: OrgConfig, username: string, password: string):
 // ---- Public API -----------------------------------------------------------------------
 
 /** children_master!A2:N and health_and_conditions!A2:F in a single request. */
-export const fetchRoster = (config: OrgConfig): Promise<RosterPayload> =>
-  apiModeOf(config) === 'live' ? liveFetchRoster(config) : mockFetchRoster();
+export const fetchRoster = (config: OrgConfig): Promise<RosterPayload> => liveFetchRoster(config);
 
 /** Appends every entry to attendance_logs in one batch. Safe to retry (log_id is de-duplicated). */
-export const submitAttendance = (entries: AttendanceEntry[], config: OrgConfig): Promise<SubmitResult> => {
-  const rows = entries.map(toLogRow);
-  return apiModeOf(config) === 'live' ? liveSubmit(config, rows) : mockSubmit(rows);
-};
+export const submitAttendance = (entries: AttendanceEntry[], config: OrgConfig): Promise<SubmitResult> =>
+  liveSubmit(config, entries.map(toLogRow));
 
-/**
- * Writes an edit to an existing child's record. In MOCK mode there's no sheet to write to —
- * the caller applies the edit to the local demo roster directly, this just confirms there's
- * nothing to send over the network.
- */
-export const updateStudent = async (childId: string, patch: StudentPatch, config: OrgConfig): Promise<void> => {
-  if (apiModeOf(config) !== 'live') return;
-  await liveUpdateStudent(config, childId, patch);
-};
+/** Writes an edit to an existing child's record on the sheet. */
+export const updateStudent = (childId: string, patch: StudentPatch, config: OrgConfig): Promise<void> =>
+  liveUpdateStudent(config, childId, patch);
 
 /**
  * Checks a username/password against the sheet's login_credentials tab. Throws ApiError with
  * a user-facing message on any failure (wrong credentials, no such tab, inactive account —
- * the server deliberately doesn't say which). Demo mode has no credentials to check, so the
- * app never calls this while disconnected; if it somehow is, it resolves (nothing to fail).
+ * the server deliberately doesn't say which).
  */
-export const login = async (username: string, password: string, config: OrgConfig): Promise<Role> => {
-  if (apiModeOf(config) !== 'live') return 'editor';
-  return liveLogin(config, username, password);
-};
+export const login = (username: string, password: string, config: OrgConfig): Promise<Role> =>
+  liveLogin(config, username, password);
 
 /**
  * Tests a Sheet connection without touching the roster, for the Settings screen's
@@ -214,4 +166,16 @@ export async function pingScript(scriptUrl: string, apiKey: string): Promise<voi
   const params = new URLSearchParams({ action: 'ping' });
   if (apiKey) params.set('key', apiKey);
   await callScript<{ ok: boolean }>(url, { method: 'GET' }, `?${params}`);
+}
+
+/**
+ * Whether this sheet actually has a login set up. login_credentials is optional — defaults
+ * to false (no login) when the field is missing entirely, so a sheet running an older
+ * Code.gs (deployed before the login feature existed) keeps working without a redeploy.
+ */
+export async function checkLoginRequired(config: OrgConfig): Promise<boolean> {
+  const params = new URLSearchParams({ action: 'ping' });
+  if (config.apiKey) params.set('key', config.apiKey);
+  const body = await callScript<{ ok: boolean; loginRequired?: boolean }>(config.scriptUrl, { method: 'GET' }, `?${params}`);
+  return body.loginRequired === true;
 }
