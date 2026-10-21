@@ -1,4 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { Capacitor } from '@capacitor/core';
+import { Filesystem, Directory } from '@capacitor/filesystem';
+import { Share } from '@capacitor/share';
 import {
   CircleAlert,
   CircleCheck,
@@ -113,6 +116,36 @@ export function Settings({ onClose }: SettingsProps) {
     };
   }, [onClose]);
 
+  const [templateError, setTemplateError] = useState<string | null>(null);
+
+  // The <a download> attribute works in a browser, but Capacitor's Android WebView has no
+  // download manager wired up for it and silently does nothing. On native, fetch the bundled
+  // asset ourselves and hand it to the OS share sheet instead, so the user can save it to
+  // Drive, Files, or anywhere else — that's the closest native equivalent of "download" here.
+  const handleDownloadTemplate = async () => {
+    if (!Capacitor.isNativePlatform()) return; // let the plain <a download> handle it on web
+    setTemplateError(null);
+    try {
+      const res = await fetch(BLANK_TEMPLATE_URL);
+      if (!res.ok) throw new Error('fetch failed');
+      const blob = await res.blob();
+      const base64 = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(String(reader.result).split(',')[1] ?? '');
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      });
+      const written = await Filesystem.writeFile({
+        path: 'srm-suite-blank-template.xlsx',
+        data: base64,
+        directory: Directory.Cache,
+      });
+      await Share.share({ title: 'SRM Suite blank student sheet', url: written.uri });
+    } catch {
+      setTemplateError('Could not open the share sheet — try again, or download it from a browser instead.');
+    }
+  };
+
   const describeError = (err: unknown) =>
     err instanceof ApiError ? err.message : 'Could not reach that URL.';
 
@@ -202,11 +235,22 @@ export function Settings({ onClose }: SettingsProps) {
                 <a
                   href={BLANK_TEMPLATE_URL}
                   download="srm-suite-blank-template.xlsx"
+                  onClick={(e) => {
+                    if (!Capacitor.isNativePlatform()) return;
+                    e.preventDefault();
+                    void handleDownloadTemplate();
+                  }}
                   className="flex min-h-touch items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 font-bold text-white shadow-sm transition hover:bg-emerald-700 active:scale-[0.98]"
                 >
                   <Download className="h-5 w-5" aria-hidden="true" />
                   Download blank student sheet (.xlsx)
                 </a>
+                {templateError && (
+                  <p className="mt-2 flex items-start gap-1.5 text-sm font-medium text-rose-700" role="alert">
+                    <CircleAlert className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+                    {templateError}
+                  </p>
+                )}
 
                 <ol className="mt-4 space-y-3">
                   {SETUP_STEPS.map((step, i) => (
