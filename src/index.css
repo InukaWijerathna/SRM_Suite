@@ -47,3 +47,18 @@
     animation: none !important;
   }
 }
+
+@keyframes srm-drawer-enter {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(0); }
+}
+
+.app-drawer[open],
+.settings-panel {
+  animation: srm-drawer-enter 180ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-drawer[open],
+  .settings-panel { animation: none; }
+}

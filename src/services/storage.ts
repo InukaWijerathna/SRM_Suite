@@ -132,7 +132,7 @@ export function clearOrgScopedData() {
 
 // ---- Session (who's logged in) ---------------------------------------------------------
 
-const EMPTY_SESSION: Session = { username: null, role: null };
+export const EMPTY_SESSION: Session = { username: null, role: null, token: null, expiresAt: null, scriptUrl: null };
 
-export const loadSession = (): Session => read<Session>(KEYS.session) ?? EMPTY_SESSION;
+export const loadSession = (): Session => ({ ...EMPTY_SESSION, ...read<Partial<Session>>(KEYS.session) });
 export const saveSession = (session: Session) => write(KEYS.session, session);

@@ -8,8 +8,8 @@ import { cn } from '../lib/cn';
  * batch; with nothing queued it is a plain "Sync" that refreshes the student list.
  */
 export function SyncButton() {
-  const { queue, syncStatus, syncNow, rosterStatus } = useApp();
-  const pending = queue.length;
+  const { queue, syncStatus, syncNow, rosterStatus, canEdit } = useApp();
+  const pending = canEdit ? queue.length : 0;
   const busy = syncStatus.state === 'syncing' || (pending === 0 && rosterStatus.state === 'loading');
 
   const label =
@@ -43,7 +43,7 @@ export function SyncButton() {
 
 /** Slim status strip under the tabs: sync result, roster freshness and the auto-sync switch. */
 export function SyncBar() {
-  const { syncStatus, rosterStatus, autoSync, setAutoSync, isOnline, students } = useApp();
+  const { syncStatus, rosterStatus, autoSync, setAutoSync, isOnline, students, canEdit } = useApp();
 
   let tone: 'ok' | 'error' | 'busy' | 'neutral' = 'neutral';
   let text = '';
@@ -81,7 +81,7 @@ export function SyncBar() {
           <span className="truncate">{text || (isOnline ? 'Ready' : 'Offline')}</span>
         </p>
 
-        <label className="flex shrink-0 cursor-pointer items-center gap-2 py-1 font-medium">
+        {canEdit && <label className="flex shrink-0 cursor-pointer items-center gap-2 py-1 font-medium">
           <span>Auto-sync</span>
           <input
             type="checkbox"
@@ -99,7 +99,7 @@ export function SyncBar() {
               'peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-brand-600',
             )}
           />
-        </label>
+        </label>}
       </div>
     </div>
   );

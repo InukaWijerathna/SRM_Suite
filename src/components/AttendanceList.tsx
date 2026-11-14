@@ -252,7 +252,7 @@ export function AttendanceList() {
         </div>
       )}
 
-      <footer className="sticky bottom-0 z-20 mt-6 border-t border-slate-200 bg-white/95 pb-[env(safe-area-inset-bottom)] backdrop-blur">
+      <footer className="sticky bottom-[var(--bottom-nav-h,4rem)] z-20 mt-6 border-t border-slate-200 bg-white/95 backdrop-blur">
         <div className="mx-auto flex max-w-3xl items-center gap-3 px-4 py-2.5">
           <dl className="grid flex-1 grid-cols-2 gap-x-3 text-xs font-semibold tabular-nums">
             <div className="flex justify-between text-emerald-700">

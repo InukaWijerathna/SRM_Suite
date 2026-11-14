@@ -1,4 +1,5 @@
-import type { AttendanceEntry, AttendanceLogRow, OrgConfig, Role, RosterPayload, StudentPatch, SubmitResult } from '../types';
+import { loadSession } from './storage';
+import type { AttendanceEntry, AttendanceLogRow, OrgConfig, Session, RosterPayload, StudentPatch, SubmitResult } from '../types';
 
 /**
  * Data access for the Google Sheet. The `OrgConfig` the caller passes in (read from the
@@ -7,8 +8,8 @@ import type { AttendanceEntry, AttendanceLogRow, OrgConfig, Role, RosterPayload,
  * which keeps the Google credentials server-side instead of in the browser bundle.
  *
  * Wire format (both directions use the sheet's own column names):
- *   GET  ?action=roster[&key=..]  ->  { ok, master: Row[], health: Row[] }
- *   POST { action: "appendAttendance", key?, entries: AttendanceLogRow[] }
+ *   POST { action: "roster", token, key? } -> { ok, master: Row[], health: Row[] }
+ *   POST { action: "appendAttendance", token, key?, entries: AttendanceLogRow[] }
  *                                 ->  { ok, appended, duplicates }
  */
 
@@ -17,7 +18,7 @@ const REQUEST_TIMEOUT_MS = 30_000;
 export class ApiError extends Error {
   constructor(
     message: string,
-    readonly kind: 'offline' | 'config' | 'network' | 'server',
+    readonly kind: 'offline' | 'config' | 'network' | 'server' | 'auth' | 'forbidden',
   ) {
     super(message);
     this.name = 'ApiError';
@@ -44,6 +45,7 @@ async function callScript<T>(
   scriptUrl: string,
   init: RequestInit,
   query = '',
+  sessionToken?: string,
 ): Promise<T> {
   assertOnline();
 
@@ -52,14 +54,22 @@ async function callScript<T>(
   try {
     const res = await fetch(`${scriptUrl}${query}`, { ...init, signal: controller.signal });
     if (!res.ok) throw new ApiError(`Server responded ${res.status}`, 'server');
-    let body: (T & { ok?: boolean; error?: string }) | undefined;
+    let body: (T & { ok?: boolean; error?: string; code?: string }) | undefined;
     try {
       body = await res.json();
     } catch {
       throw new ApiError('Server returned an unreadable response', 'server');
     }
-    if (!body || body.ok === false) {
-      throw new ApiError(body?.error ?? 'Server rejected the request', 'server');
+    if (!body || body.ok !== true) {
+      if (body?.code === 'AUTH_REQUIRED') {
+        const current = loadSession();
+        // A delayed failure from an old request must not sign out a newer session.
+        if (sessionToken && current.token === sessionToken && current.scriptUrl === scriptUrl) {
+          window.dispatchEvent(new CustomEvent('srm:session-expired', { detail: scriptUrl }));
+        }
+        throw new ApiError(body.error ?? 'Please sign in again.', 'auth');
+      }
+      throw new ApiError(body?.error ?? 'Server rejected the request', body?.code === 'FORBIDDEN' ? 'forbidden' : 'server');
     }
     return body;
   } catch (err) {
@@ -73,10 +83,20 @@ async function callScript<T>(
   }
 }
 
+function authRequest<T>(config: OrgConfig, action: string, data: object = {}): Promise<T> {
+  const session = loadSession();
+  if (!session.token || session.scriptUrl !== config.scriptUrl || !session.expiresAt || session.expiresAt <= Date.now()) {
+    throw new ApiError('Your session has expired. Please sign in again.', 'auth');
+  }
+  return callScript<T>(config.scriptUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+    body: JSON.stringify({ ...data, action, key: config.apiKey || undefined, token: session.token }),
+  }, '', session.token);
+}
+
 async function liveFetchRoster(config: OrgConfig): Promise<RosterPayload> {
-  const params = new URLSearchParams({ action: 'roster' });
-  if (config.apiKey) params.set('key', config.apiKey);
-  const body = await callScript<RosterPayload>(config.scriptUrl, { method: 'GET' }, `?${params}`);
+  const body = await authRequest<RosterPayload>(config, 'roster');
   if (!Array.isArray(body.master) || !Array.isArray(body.health)) {
     throw new ApiError('Roster response is missing the master/health tabs', 'server');
   }
@@ -84,45 +104,36 @@ async function liveFetchRoster(config: OrgConfig): Promise<RosterPayload> {
 }
 
 async function liveSubmit(config: OrgConfig, rows: AttendanceLogRow[]): Promise<SubmitResult> {
-  const body = await callScript<Partial<SubmitResult>>(config.scriptUrl, {
-    method: 'POST',
-    // text/plain keeps this a "simple" CORS request: Apps Script cannot answer preflights.
-    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-    body: JSON.stringify({ action: 'appendAttendance', key: config.apiKey || undefined, entries: rows }),
-  });
-  return { appended: body.appended ?? rows.length, duplicates: body.duplicates ?? 0 };
+  return authRequest<SubmitResult>(config, 'appendAttendance', { entries: rows });
 }
 
 async function liveUpdateStudent(config: OrgConfig, childId: string, patch: StudentPatch): Promise<void> {
-  const body = await callScript<{ updatedMaster?: boolean; updatedHealth?: boolean }>(config.scriptUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-    body: JSON.stringify({
-      action: 'updateStudent',
-      key: config.apiKey || undefined,
-      childId,
-      master: patch.master,
-      health: patch.health,
-    }),
-  });
+  const body = await authRequest<{ updatedMaster?: boolean; updatedHealth?: boolean }>(config, 'updateStudent', { childId, ...patch });
   if (!body.updatedMaster && !body.updatedHealth) {
-    // The call succeeded but nothing matched a real column — almost always a header-name
-    // mismatch (see StudentPatch), not a transient failure, so say so plainly.
-    throw new ApiError(
-      "Saved, but nothing changed on the sheet — its column names may not match the app's (see README).",
-      'server',
-    );
+    throw new ApiError("No matching columns changed on the sheet. Check its column names.", 'server');
   }
 }
 
-async function liveLogin(config: OrgConfig, username: string, password: string): Promise<Role> {
-  const res = await callScript<{ ok: boolean; role?: string }>(config.scriptUrl, {
+async function liveLogin(config: OrgConfig, username: string, password: string): Promise<Session> {
+  const res = await callScript<Session>(config.scriptUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'text/plain;charset=utf-8' },
     body: JSON.stringify({ action: 'login', key: config.apiKey || undefined, username, password }),
   });
-  return res.role === 'viewer' ? 'viewer' : 'editor';
+  if (typeof res.token !== 'string' || !/^[a-f0-9]{64}$/.test(res.token) || typeof res.username !== 'string' || !res.username.trim() || typeof res.expiresAt !== 'number' || !Number.isFinite(res.expiresAt) || res.expiresAt <= Date.now() || !['viewer', 'editor'].includes(res.role ?? '')) {
+    throw new ApiError('Update the Apps Script deployment to enable secure sign-in.', 'config');
+  }
+  return { ...res, scriptUrl: config.scriptUrl };
 }
+
+export async function validateSession(config: OrgConfig): Promise<Pick<Session, 'username' | 'role' | 'expiresAt'>> {
+  const verified = await authRequest<Pick<Session, 'username' | 'role' | 'expiresAt'>>(config, 'session');
+  if (verified.username !== loadSession().username || !['viewer', 'editor'].includes(verified.role ?? '') || typeof verified.expiresAt !== 'number' || !Number.isFinite(verified.expiresAt) || verified.expiresAt <= Date.now()) {
+    throw new ApiError('The server could not verify your session. Please sign in again.', 'auth');
+  }
+  return verified;
+}
+export const revokeSession = (config: OrgConfig): Promise<unknown> => authRequest(config, 'logout');
 
 // ---- Public API -----------------------------------------------------------------------
 
@@ -142,7 +153,7 @@ export const updateStudent = (childId: string, patch: StudentPatch, config: OrgC
  * a user-facing message on any failure (wrong credentials, no such tab, inactive account —
  * the server deliberately doesn't say which).
  */
-export const login = (username: string, password: string, config: OrgConfig): Promise<Role> =>
+export const login = (username: string, password: string, config: OrgConfig): Promise<Session> =>
   liveLogin(config, username, password);
 
 /**
@@ -163,19 +174,18 @@ export async function pingScript(scriptUrl: string, apiKey: string): Promise<voi
   if (parsed.protocol !== 'https:' && parsed.hostname !== 'localhost') {
     throw new ApiError('The URL must start with https://', 'config');
   }
-  const params = new URLSearchParams({ action: 'ping' });
-  if (apiKey) params.set('key', apiKey);
-  await callScript<{ ok: boolean }>(url, { method: 'GET' }, `?${params}`);
+  await checkLoginRequired({ scriptUrl: url, apiKey, orgName: '', countryCode: '94', nationalLength: 9 });
 }
 
 /**
- * Whether this sheet actually has a login set up. login_credentials is optional — defaults
- * to false (no login) when the field is missing entirely, so a sheet running an older
- * Code.gs (deployed before the login feature existed) keeps working without a redeploy.
+ * Require the authenticated backend protocol. Legacy or failed checks never unlock data.
  */
 export async function checkLoginRequired(config: OrgConfig): Promise<boolean> {
   const params = new URLSearchParams({ action: 'ping' });
   if (config.apiKey) params.set('key', config.apiKey);
-  const body = await callScript<{ ok: boolean; loginRequired?: boolean }>(config.scriptUrl, { method: 'GET' }, `?${params}`);
-  return body.loginRequired === true;
+  const body = await callScript<{ ok: boolean; loginRequired?: boolean; authVersion?: number }>(config.scriptUrl, { method: 'GET' }, `?${params}`);
+  if (body.authVersion !== 2 || body.loginRequired !== true) {
+    throw new ApiError('Update the Apps Script deployment to enable secure sign-in.', 'config');
+  }
+  return true;
 }

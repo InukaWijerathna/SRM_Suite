@@ -1,8 +1,20 @@
 # SRM Suite — Student Record Manager (PWA + Android)
 
+Current release: **v0.3.0-beta** · Android version code **2** · Backend authentication protocol **2**.
+
 Offline-first attendance, QR check-in and a student/health directory. React 18 + Vite + TypeScript + Tailwind, with each organization's own Google Sheet as the database (through a small Apps Script web app). Ships two ways from the same code: an installable web PWA, and a native Android app (via Capacitor).
 
-**One app build, any number of organizations.** No organization's Google Sheet URL is built into the app. Each install connects to its own sheet from inside the app (the gear icon → Settings), which also has step-by-step setup instructions and a one-tap blank-template download. That connection is stored on the device and can be changed to a different sheet at any time; a fresh install walks you through connecting a sheet before it can be used.
+**One app build, any number of organizations.** No organization's Google Sheet URL is built into the app. Each install connects to its own sheet from inside the app (tap the header logo → **Settings & connection**), which also has step-by-step setup instructions and a one-tap blank-template download. That connection is stored on the device and can be changed to a different sheet at any time; a fresh install walks you through connecting a sheet before it can be used.
+
+## First launch and everyday navigation
+
+A new installation contains no organization's Sheet connection, student roster, or signed-in account. Settings opens on first launch. If you close it, tap **Configure** in the center of the home screen to reopen it from the left. After the administrator saves a valid connection, sign in to download the student roster. Installing an update with the same package and signing certificate preserves existing app data; it does not simulate a fresh installation.
+
+The header shows the signed-in username and role. Tap the logo or account label to open the left panel, which contains **Settings & connection**, connection/sync status, and **Log out**. Settings opens as a full-height panel from the left. Editors navigate using the bottom **Home**, **Attendance**, and **Scanner** tabs. Viewers have directory access only. The left panel does not repeat these navigation tabs.
+
+Login includes a Show/Hide password control and does not open the keyboard automatically. An empty connected sheet shows **No students yet**. The attendance submit footer stays above the bottom navigation.
+
+## Local development
 
 ```bash
 npm install
@@ -17,7 +29,7 @@ The Android app is the same web app wrapped by [Capacitor](https://capacitorjs.c
 
 ### One-time setup
 
-1. **JDK 21.** Gradle (which builds Android apps) does not yet run on very new JDKs. If `java -version` isn't 17–21, install Temurin 21 and point `JAVA_HOME` at it for the build (no need to change your system default):
+1. **JDK 21.** The Android project compiles Java 21 sources. Use JDK 21 for the documented Gradle wrapper and point `JAVA_HOME` at it for the build (no need to change your system default):
    ```bash
    # Windows PowerShell example — adjust the install path to wherever you put it
    $env:JAVA_HOME = "C:\path\to\jdk-21"
@@ -36,6 +48,7 @@ npm run android:sync     # builds the web app and copies it into android/
 npm run android:open     # opens the project in Android Studio (Run ▶ to install on a device/emulator)
 # or, from the command line:
 npm run android:build    # debug APK -> android/app/build/outputs/apk/debug/app-debug.apk
+npm run android:apk:release # unsigned release APK -> android/app/build/outputs/apk/release/app-release-unsigned.apk
 npm run android:release  # release bundle -> android/app/build/outputs/bundle/release/app-release.aab (needs signing — see below)
 ```
 
@@ -52,7 +65,7 @@ Run `android:sync` again after any change to `src/`, `public/`, or `capacitor.co
 
 ## Google Sheet structure
 
-Three tabs. Row 1 holds the headers below (column order doesn't matter, the names do). Ready-made workbooks with these headers live in `attendance-tracker-demo-data-v3.xlsx` (demo data) and `attendance-tracker-blank-template-v3.xlsx` (headers only) — upload either to Google Drive and **File → Save as Google Sheets**.
+Three tabs. Row 1 holds the headers below (column order doesn't matter, the names do). A ready-made workbook with these headers lives in `public/templates/srm-suite-blank-template.xlsx` (headers only) — upload it to Google Drive and **File → Save as Google Sheets**.
 
 | Tab | Columns |
 | --- | --- |
@@ -72,19 +85,20 @@ How the app reads the data:
 
 ## Connecting your organization's sheet (no rebuild needed)
 
-Open the app and tap the gear icon in the header. **Settings** has step-by-step instructions built in ("First time setting this up?"), including a one-tap download of a blank, correctly-headed student sheet — the same steps are repeated here for reference:
+Open the app and tap the header logo, then **Settings & connection**. On an unconfigured installation, the central **Configure** button opens the same Settings panel. **Settings** has step-by-step instructions built in ("First time setting this up?"), including a one-tap download of a blank, correctly-headed student sheet — the same steps are repeated here for reference:
 
-1. **Get a blank sheet.** Download it from Settings (or use `attendance-tracker-blank-template-v3.xlsx` / your own workbook), upload to Google Drive, open it, then **File → Save as Google Sheets**.
-2. In the spreadsheet: **Extensions → Apps Script**, paste [apps-script/Code.gs](apps-script/Code.gs), save. Run `setup` once from the editor and approve the permissions (this also creates the `attendance_logs` tab if it's missing).
+1. **Get a blank sheet.** Download it from Settings (or use [the blank template](public/templates/srm-suite-blank-template.xlsx) / your own workbook), upload to Google Drive, open it, then **File → Save as Google Sheets**.
+2. In the spreadsheet: **Extensions → Apps Script**, paste [apps-script/Code.gs](apps-script/Code.gs), save. Run `setup` once and approve the permissions, then run `setUserPassword` to create the first account. Choose `editor` for attendance and editing, or `viewer` for directory-only access.
 3. **Deploy → New deployment → Web app**. Execute as **Me**, access **Anyone**. Copy the `/exec` URL.
 4. Optional: in **Project settings → Script properties** add `API_KEY` with any long random string.
 5. Back in the app's Settings: paste the URL (and the API key, if you set one), tap **Test connection**, then **Save**.
+6. Sign in using the account created with `setUserPassword`.
 
 That's it — no `.env`, no rebuild, no redeploying the app. The connection is saved on that device; re-opening Settings and saving a different URL switches it. Switching from one organization's sheet to another's also clears that device's cached roster and any unsynced attendance, so one organization's data can never leak into another's view or get synced to the wrong sheet.
 
 `.env` still exists purely as a **local development convenience** (see `.env.example`): if `VITE_APPS_SCRIPT_URL` is set, it pre-fills Settings the first time the app runs on a device with nothing saved yet, so `npm run dev` doesn't need re-typing credentials every session. **Leave it unset in any build meant for other organizations to install** — it has no effect once something has actually been saved through Settings, but setting it defeats the "one build, no baked-in sheet" model for a build you intend to distribute.
 
-> **Privacy:** the roster contains children's names, addresses, phone numbers and medical conditions, and an "Anyone" web app URL will serve it to whoever has the link. The API key ships inside the Settings screen's saved config / the dev-convenience env var, so it deters casual access only. If the link could leak, put the Sheet's Apps Script behind additional access controls and keep the URL private — share it only through Settings, not in the app's source or a public build.
+> **Privacy:** roster and attendance endpoints require a valid server-issued session. The optional API key identifies the installation; it is not a substitute for user login. Cached roster data remains on the device for offline use, so protect devices that store student information.
 
 ## Registering students with a Google Form
 
@@ -128,5 +142,52 @@ src/services/storage.ts    localStorage layer (roster, queue, prefs)
 src/services/audio.ts      Web Audio beeps + vibration
 src/context/AppContext.tsx roster, attendance queue, sync state
 src/lib/                   sheet-row join/normalisation, phone, photo, health rules
-src/components/            Header, SyncBar, StudentDirectory/Card/DetailModal, AttendanceList, QRScanner
+src/components/            Header, AccountDrawer, Settings, Login, directory, attendance and scanner screens
+tests/                     Backend authorization and client protocol regression tests
 ```
+
+
+## Required login and backend upgrade
+
+The app and `apps-script/Code.gs` use authentication protocol version 2. Update both together.
+An older backend, a failed connection check, or an unsigned session never unlocks the directory.
+
+1. Replace `Code.gs` in the spreadsheet's Apps Script project with this version.
+2. Run `setUserPassword` to create the first account. It adds `login_credentials` and stores a password hash, not the password. Select `editor` or `viewer` for the account.
+3. Deploy a new version through **Deploy → Manage deployments → Edit → New version → Deploy**. Retain the existing `/exec` URL. The old app will stop accessing this deployment because it cannot provide a session token.
+4. Install the updated app, connect that `/exec` URL in Settings, and sign in.
+
+Every roster read, attendance submission, and student edit validates the session on the server.
+Viewer accounts can read the directory; only editors can submit attendance or edit students.
+Sessions last up to six hours and may end earlier if Apps Script evicts its cache. Logout revokes
+the server session when online. Disabling an account or changing its password invalidates existing
+sessions; role changes apply on the next request. An offline device can use its cached roster
+until its previously issued session expires. Server changes take effect when it reconnects.
+
+Run `npm test` for backend authorization and client protocol regression tests, and `npm run build`
+for TypeScript and production build validation.
+
+
+## Managing accounts
+
+Accounts are managed in the connected spreadsheet, not through an in-app administrator screen:
+
+- Create a user or reset a password by running `setUserPassword` in Apps Script. Never edit `Password_Hash` manually.
+- On `login_credentials`, set `Role` to `editor` or `viewer`, and `Status` to `active` or `inactive`.
+- Disabling a user or changing a password invalidates their server sessions. An offline device can retain cached access until its session expires.
+- Logout keeps unsent attendance on the device. Switching to a different organization's connection clears its old cached data and pending attendance.
+
+## APK releases and security status
+
+See [v0.3.0-beta release notes](docs/releases/v0.3.0-beta.md) and the [security assessment](SECURITY_ASSESSMENT.md).
+
+The installable beta release APK uses the **release variant signed with the existing debug/testing certificate**. A debug-variant APK is also provided for diagnostics. Neither is production-signed. `android:apk:release` additionally creates a release-variant APK that remains **unsigned** until a production signing configuration is supplied; Android cannot install it as-is. Keep the same signing key for updates. Do not uninstall an older build to resolve a signature mismatch without first preserving its pending attendance and connection details.
+
+Known security work remains: stronger password hashing and login throttling, formula-safe spreadsheet writes and editable-field validation, protection of locally cached sensitive data, and development-tool dependency upgrades. This release does not claim to resolve those assessment findings. Do not use a weak or shared administrator password.
+
+No real Sheet URLs, API keys, account passwords, signing keys, emulator backups, or cached student records belong in the repository or release assets.
+
+
+### Publishing the prepared beta
+
+The prepared artifacts live in ignored `.tools/releases/v0.3.0-beta/`. From an authenticated PowerShell terminal, run `./scripts/publish-release.ps1` to verify checksums, commit the reviewed files, push main and the beta tag, and create the GitHub prerelease. The script stops for unexpected changed files, remote commits not integrated locally, or an existing release; it does not overwrite tags or release assets. It requires working `gh` authentication in the terminal where it is run. Credentials and signing keys are never committed or uploaded.

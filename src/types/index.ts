@@ -147,14 +147,17 @@ export interface OrgConfig {
 }
 
 /**
- * Who's signed in on this device, kept on-device only (never sent anywhere but the one login
- * request). Cleared automatically whenever the Sheet connection changes — a login for one
+ * Signed-in identity and expiring server token. Data requests send the token to this sheet.
+ * Cleared automatically whenever the Sheet connection changes — a login for one
  * organization's sheet must never carry over to another's.
  */
 export type Role = 'viewer' | 'editor';
 
 export interface Session {
   username: string | null;
-  /** null when signed out, or when the sheet has no Role column (treated as editor elsewhere). */
+  token: string | null;
+  expiresAt: number | null;
+  scriptUrl: string | null;
+  /** null when signed out. */
   role: Role | null;
 }

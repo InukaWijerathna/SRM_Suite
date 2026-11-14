@@ -1,12 +1,13 @@
 /**
  * SRM Suite (Student Record Manager): Google Apps Script backend.
  *
- * Deploy as a web app (see README.md). It exposes two things to the PWA:
+ * Deploy as a web app (see README.md). Data endpoints require a server session token.
+ * GET ping is public (subject to API_KEY) and reports authVersion: 2.
  *
- *   GET  ?action=roster[&key=..]
+ *   POST { action: "roster", token, key? }
  *        -> { ok, master: [...children_master rows], health: [...health_and_conditions rows] }
  *
- *   POST { action: "appendAttendance", key?, entries: [{log_id, timestamp, child_id, attendance_status}] }
+ *   POST { action: "appendAttendance", token, key?, entries: [{log_id, timestamp, child_id, attendance_status}] }
  *        -> { ok, appended, duplicates }
  *
  *   POST { action: "updateStudent", key?, childId, master?: {header: value}, health?: {header: value} }
@@ -37,10 +38,8 @@
  *   login_credentials      Username, Password_Hash, Status (active/inactive, blank = active),
  *                          Role (viewer/editor, blank = editor — a dropdown is added automatically
  *                          by the "Set a user's password" menu item)
- *                          Only needed once you've connected the app to this sheet, which is
- *                          when it starts requiring login. Missing this tab (or having no
- *                          active user in it) makes every login attempt fail — it is never
- *                          treated as "no login needed". See "Setting a user's password" below
+ *                          Required for sign-in. Missing accounts never allow anonymous data
+ *                          access. See "Setting a user's password" below
  *                          for how an admin creates the first account.
  *
  * The script does not interpret the roster columns. It returns every column as-is (header
@@ -68,19 +67,10 @@ function doGet(e) {
   return respond_(function () {
     var params = (e && e.parameter) || {};
     requireKey_(params.key);
-    var action = params.action || 'roster';
-
-    if (action === 'roster') {
-      return {
-        ok: true,
-        master: readRows_(SHEETS.master),
-        health: readRows_(SHEETS.health, true),
-        generatedAt: new Date().toISOString(),
-        loginRequired: loginConfigured_(),
-      };
-    }
-    if (action === 'ping') return { ok: true, loginRequired: loginConfigured_() };
-    throw new Error('Unknown action: ' + action);
+    if (params.action === 'ping') return { ok: true, loginRequired: true, authVersion: 2 };
+    requireSession_(params.token, false);
+    if (!params.action || params.action === 'roster') return roster_();
+    throw new Error('Unknown action');
   });
 }
 
@@ -88,11 +78,53 @@ function doPost(e) {
   return respond_(function () {
     var body = JSON.parse((e && e.postData && e.postData.contents) || '{}');
     requireKey_(body.key);
+    if (body.action === 'login') return login_(body.username, body.password);
+    var session = requireSession_(body.token, body.action === 'appendAttendance' || body.action === 'updateStudent');
+    if (body.action === 'roster') return roster_();
+    if (body.action === 'session') return { ok: true, username: session.username, role: session.role, expiresAt: session.expiresAt };
+    if (body.action === 'logout') {
+      CacheService.getScriptCache().remove('session:' + sha256Hex_(body.token));
+      return { ok: true };
+    }
     if (body.action === 'appendAttendance') return appendAttendance_(body.entries);
     if (body.action === 'updateStudent') return updateStudent_(body.childId, body.master, body.health);
-    if (body.action === 'login') return login_(body.username, body.password);
-    throw new Error('Unknown action: ' + body.action);
+    throw new Error('Unknown action');
   });
+}
+
+function roster_() {
+  return { ok: true, master: readRows_(SHEETS.master), health: readRows_(SHEETS.health, true), generatedAt: new Date().toISOString() };
+}
+
+function authError_(message, code) {
+  var error = new Error(message);
+  error.code = code || 'AUTH_REQUIRED';
+  return error;
+}
+
+function requireSession_(token, editorOnly) {
+  if (typeof token !== 'string' || !/^[a-f0-9]{64}$/.test(token)) throw authError_('Please sign in.');
+  var raw = CacheService.getScriptCache().get('session:' + sha256Hex_(token));
+  if (!raw) throw authError_('Your session has expired. Please sign in again.');
+  var session = JSON.parse(raw);
+  if (session.expiresAt <= Date.now()) throw authError_('Your session has expired. Please sign in again.');
+  var sheet = getSpreadsheet_().getSheetByName(SHEETS.logins);
+  if (!sheet || sheet.getLastRow() < 2) throw authError_('Please sign in again.');
+  var headers = readHeaders_(sheet);
+  var userCol = headers.indexOf('username');
+  var hashCol = headers.indexOf('password_hash');
+  var statusCol = headers.indexOf('status');
+  var roleCol = headers.indexOf('role');
+  if (userCol < 0 || hashCol < 0) throw authError_('Please sign in again.');
+  var rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, headers.length).getValues();
+  var user = rows.filter(function (row) { return String(row[userCol]).trim().toLowerCase() === session.username.toLowerCase(); })[0];
+  if (!user || String(user[hashCol]) !== session.passwordHash || (statusCol >= 0 && String(user[statusCol]).trim().toLowerCase() === 'inactive')) {
+    throw authError_('Your account has changed. Please sign in again.');
+  }
+  var role = roleCol < 0 ? 'editor' : String(user[roleCol] || 'editor').trim().toLowerCase();
+  session.role = role === 'editor' ? 'editor' : 'viewer';
+  if (editorOnly && session.role !== 'editor') throw authError_('This account has read-only access.', 'FORBIDDEN');
+  return session;
 }
 
 /** Run once from the editor to authorise the script and create the attendance_logs tab. */
@@ -246,26 +278,6 @@ function firstIndex_(list, predicate) {
 //      hash to login_credentials (creating the tab and the row if they don't exist yet).
 // The sheet only ever stores the hash — the password you type is never written anywhere.
 
-/**
- * Whether this sheet actually has anyone to log in as. login_credentials is optional — a
- * sheet with no tab, or a tab with headers but zero rows, means "skip login entirely" rather
- * than "nobody can ever get in" (which is what login_'s fail-closed check would otherwise
- * mean the moment the app required a signed-in session for every connected sheet).
- */
-function loginConfigured_() {
-  var sheet = getSpreadsheet_().getSheetByName(SHEETS.logins);
-  if (!sheet) return false;
-  var headers = readHeaders_(sheet);
-  var userCol = headers.indexOf('username');
-  if (userCol === -1) return false;
-  var lastRow = sheet.getLastRow();
-  if (lastRow < 2) return false;
-  var ids = sheet.getRange(2, userCol + 1, lastRow - 1, 1).getValues();
-  return ids.some(function (row) {
-    return String(row[0]).trim() !== '';
-  });
-}
-
 /** Checks a username/password against login_credentials. Never reveals which part was wrong. */
 function login_(username, password) {
   var name = String(username || '').trim();
@@ -293,8 +305,14 @@ function login_(username, password) {
       // No Role column, or the cell is blank, means full access — matches every account's
       // behaviour before roles existed, so adding the column never silently locks anyone out.
       var role = roleCol === -1 ? 'editor' : String(rows[i][roleCol] || 'editor').trim().toLowerCase();
-      if (role !== 'viewer' && role !== 'editor') role = 'editor';
-      return { ok: true, role: role };
+      if (role !== 'viewer' && role !== 'editor') role = 'viewer';
+      var token = sha256Hex_(Utilities.getUuid() + Utilities.getUuid());
+      var expiresAt = Date.now() + 6 * 60 * 60 * 1000;
+      var canonicalName = String(rows[i][userCol]).trim();
+      CacheService.getScriptCache().put('session:' + sha256Hex_(token), JSON.stringify({
+        username: canonicalName, passwordHash: String(rows[i][hashCol]), expiresAt: expiresAt,
+      }), 21600);
+      return { ok: true, username: canonicalName, role: role, token: token, expiresAt: expiresAt };
     }
     throw new Error('Invalid username or password');
   }
@@ -452,7 +470,7 @@ function respond_(fn) {
   try {
     result = fn();
   } catch (err) {
-    result = { ok: false, error: String((err && err.message) || err) };
+    result = { ok: false, error: String((err && err.message) || err), code: err && err.code || 'SERVER_ERROR' };
   }
   return ContentService.createTextOutput(JSON.stringify(result)).setMimeType(ContentService.MimeType.JSON);
 }

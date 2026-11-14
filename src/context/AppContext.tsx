@@ -25,6 +25,8 @@ import type {
 import {
   ApiError,
   checkLoginRequired,
+  validateSession,
+  revokeSession,
   fetchRoster,
   login as apiLogin,
   submitAttendance,
@@ -33,6 +35,7 @@ import {
 import { setSoundEnabled } from '../services/audio';
 import {
   clearOrgScopedData,
+  EMPTY_SESSION,
   loadOrgConfig,
   loadPrefs,
   loadQueue,
@@ -102,6 +105,10 @@ interface AppContextValue {
   // Session: who's signed in on this device.
   /** True once a sheet is connected: that's when login starts being required. */
   requiresLogin: boolean;
+  authChecking: boolean;
+  authError: string | null;
+  retryAuth: () => void;
+  canEdit: boolean;
   username: string | null;
   /** 'viewer' is read-only; null until signed in or when the sheet has no Role column (= editor). */
   role: Role | null;
@@ -199,6 +206,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [prefs, setPrefs] = useState(loadPrefs);
   const [orgConfig, setOrgConfigState] = useState(loadOrgConfig);
   const [session, setSession] = useState(loadSession);
+  const [authAttempt, setAuthAttempt] = useState(0);
+  const authKey = JSON.stringify([orgConfig.scriptUrl, orgConfig.apiKey, session.token]);
+  const [authState, setAuthState] = useState<{ key: string; status: 'checking' | 'ready' | 'error'; error: string | null }>({ key: '', status: 'checking', error: null });
+  const sessionValid = !!session.token && session.scriptUrl === orgConfig.scriptUrl && !!session.expiresAt && session.expiresAt > Date.now();
+  const canAccess = sessionValid && authState.key === authKey && authState.status === 'ready';
+  const canEdit = canAccess && session.role === 'editor';
+
 
   const studentsById = useMemo(() => new Map(students.map((s) => [s.childId, s])), [students]);
 
@@ -218,9 +232,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [marksState, today]);
 
   // Latest values for callbacks that fire outside React (scanner frames, timers).
-  const latest = useRef({ marks, queue: marksState.queue, studentsById, orgConfig });
+  const latest = useRef({ marks, queue: marksState.queue, studentsById, orgConfig, canAccess, canEdit });
   useLayoutEffect(() => {
-    latest.current = { marks, queue: marksState.queue, studentsById, orgConfig };
+    latest.current = { marks, queue: marksState.queue, studentsById, orgConfig, canAccess, canEdit };
   });
 
   // ---- persistence
@@ -258,7 +272,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
     // would be silently skipped, and the generation check below would then (correctly)
     // discard the stale old response, leaving nothing to ever resolve "loading".
     const forced = overrideConfig !== undefined;
-    if (!forced && refreshingRoster.current) return;
     const config = overrideConfig ?? latest.current.orgConfig;
     if (!config.scriptUrl.trim()) {
       // Nothing to fetch yet — the first-launch Settings screen (or the gear icon) is how
@@ -266,6 +279,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setRosterStatus({ state: 'error', error: 'Connect your Google Sheet in Settings to get started.' });
       return;
     }
+    if (!latest.current.canAccess || (!forced && refreshingRoster.current)) return;
     refreshingRoster.current = true;
     const generation = rosterGeneration.current;
     setRosterStatus((s) => (s.state === 'ready' ? s : { state: 'loading' }));
@@ -295,15 +309,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
         s.fetchedAt ? s : { state: 'error', error: 'Offline, and no saved student list on this device yet.' },
       );
     }
-  }, [refreshRoster]);
+  }, [refreshRoster, canAccess]);
 
   // Back online with no roster yet: load it without making anyone tap retry.
   useEffect(() => {
     if (isOnline && students.length === 0) void refreshRoster();
-  }, [isOnline, students.length, refreshRoster]);
+  }, [isOnline, students.length, refreshRoster, canAccess]);
 
   // ---- editing a student
   const updateStudent = useCallback(async (childId: string, edit: StudentEdit) => {
+    if (!latest.current.canEdit) throw new Error("This account has read-only access.");
     const weightKg = edit.weightKg.trim() === '' ? undefined : Number(edit.weightKg);
     const heightCm = edit.heightCm.trim() === '' ? undefined : Number(edit.heightCm);
 
@@ -375,6 +390,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   // ---- attendance actions
   const toggleMark = useCallback((childId: string, status: AttendanceStatus) => {
+    if (!latest.current.canEdit) return;
     const { marks: current } = latest.current;
     const existing = current.get(childId);
     const day = dayKey(new Date());
@@ -390,6 +406,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const markAllPresent = useCallback((childIds: string[]) => {
+    if (!latest.current.canEdit) return 0;
     const { marks: current } = latest.current;
     const timestamp = isoNow();
     const entries = childIds
@@ -400,12 +417,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const clearPending = useCallback((childIds?: string[]) => {
+    if (!latest.current.canEdit) return;
     dispatch({ type: 'clearDay', day: dayKey(new Date()), childIds });
   }, []);
 
   const recordScan = useCallback((rawId: string): ScanOutcome => {
     const { marks: current, studentsById: byId } = latest.current;
     const id = normalizeId(rawId);
+    if (!latest.current.canEdit) return { kind: 'unknown', id };
     const child = byId.get(id);
     if (!child) return { kind: 'unknown', id };
     if (child.status !== 'active') return { kind: 'inactive', child };
@@ -427,6 +446,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const syncNow = useCallback(async () => {
     if (syncing.current) return;
     const batch = latest.current.queue;
+    if (!latest.current.canAccess) return;
+    if (batch.length > 0 && !latest.current.canEdit) return;
     if (batch.length === 0) {
       // Nothing to submit: the button doubles as "refresh the student list".
       await refreshRoster();
@@ -453,7 +474,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const setOrgConfig = useCallback(
     (next: OrgConfig) => {
       setOrgConfigState((prev) => {
-        const sheetChanged = next.scriptUrl.trim() !== prev.scriptUrl.trim();
+        const sheetChanged = next.scriptUrl.trim() !== prev.scriptUrl.trim() || next.apiKey !== prev.apiKey;
         saveOrgConfig(next);
         if (sheetChanged) {
           // A different sheet: the previous one's roster, queue and synced marks are not
@@ -463,8 +484,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
           dispatch({ type: 'reset' });
           setStudents([]);
           setRosterStatus({ state: 'loading' });
-          setSession({ username: null, role: null }); // a login for the old sheet must not carry over
-          void refreshRoster(next);
+          setSession(EMPTY_SESSION); // a login for the old sheet must not carry over
+          setAuthState({ key: '', status: 'checking', error: null });
         }
         return next;
       });
@@ -478,52 +499,84 @@ export function AppProvider({ children }: { children: ReactNode }) {
     [orgConfig.countryCode, orgConfig.nationalLength],
   );
 
-  // ---- login_credentials is optional per-sheet: ask the sheet whether anyone's actually
-  // registered there rather than assuming every connected sheet demands a login. Defaults to
-  // false (no gate) until this resolves, so the app never gets stuck showing a login screen
-  // nobody can pass for a sheet that was never meant to require one.
-  const [loginRequired, setLoginRequired] = useState(false);
+  // Never render cached student data until the connection and session are verified.
   useEffect(() => {
-    if (!isLive) {
-      setLoginRequired(false);
-      return;
-    }
     let cancelled = false;
-    checkLoginRequired(orgConfig)
-      .then((required) => {
-        if (!cancelled) setLoginRequired(required);
-      })
-      .catch(() => {
-        if (!cancelled) setLoginRequired(false);
-      });
-    return () => {
-      cancelled = true;
+    setAuthState({ key: authKey, status: 'checking', error: null });
+    const check = async () => {
+      try {
+        if (!isLive) {
+          if (!cancelled) setAuthState({ key: authKey, status: 'ready', error: null });
+          return;
+        }
+        if (!isOnline) {
+          if (!sessionValid) throw new Error('Connect to the internet to sign in.');
+          if (!cancelled) setAuthState({ key: authKey, status: 'ready', error: null });
+          return; // Previously signed-in devices can use their cache until session expiry.
+        }
+        await checkLoginRequired(orgConfig);
+        if (sessionValid) {
+          const verified = await validateSession(orgConfig);
+          if (!cancelled && verified.role !== session.role) setSession((prev) => {
+            const next = { ...prev, role: verified.role };
+            saveSession(next);
+            return next;
+          });
+        }
+      } catch (err) {
+        if (!cancelled) setAuthState({ key: authKey, status: 'error', error: describeError(err) });
+        return;
+      }
+      if (!cancelled) setAuthState({ key: authKey, status: 'ready', error: null });
     };
-  }, [isLive, orgConfig]);
+    void check();
+    return () => { cancelled = true; };
+  }, [authKey, authAttempt, isLive, isOnline]);
+
+  useEffect(() => {
+    const expired = (event: Event) => {
+      if ((event as CustomEvent<string>).detail !== latest.current.orgConfig.scriptUrl) return;
+      rosterGeneration.current += 1;
+      saveSession(EMPTY_SESSION);
+      setSession(EMPTY_SESSION);
+    };
+    window.addEventListener('srm:session-expired', expired);
+    return () => window.removeEventListener('srm:session-expired', expired);
+  }, []);
+
+  useEffect(() => {
+    if (!session.expiresAt) return;
+    const timer = setTimeout(() => {
+      saveSession(EMPTY_SESSION);
+      setSession(EMPTY_SESSION);
+    }, Math.max(0, session.expiresAt - Date.now()));
+    return () => clearTimeout(timer);
+  }, [session.expiresAt]);
 
   // ---- session (who's logged in)
   const login = useCallback(
     async (username: string, password: string) => {
-      const role = await apiLogin(username, password, orgConfig);
-      const next = { username: username.trim(), role };
+      const next = await apiLogin(username, password, orgConfig);
       setSession(next);
       saveSession(next);
     },
     [orgConfig],
   );
   const logout = useCallback(() => {
-    setSession({ username: null, role: null });
-    saveSession({ username: null, role: null });
+    void revokeSession(latest.current.orgConfig).catch(() => undefined);
+    rosterGeneration.current += 1;
+    setSession(EMPTY_SESSION);
+    saveSession(EMPTY_SESSION);
   }, []);
 
   // Auto-sync: wait for a burst of marks to settle, then post them in one batch.
   const queueLength = marksState.queue.length;
   useEffect(() => {
-    if (!prefs.autoSync || !isOnline || queueLength === 0 || syncStatus.state === 'syncing') return;
+    if (!canEdit || !prefs.autoSync || !isOnline || queueLength === 0 || syncStatus.state === 'syncing') return;
     const delay = syncStatus.state === 'error' ? 60_000 : 15_000;
     const timer = setTimeout(() => void syncNow(), delay);
     return () => clearTimeout(timer);
-  }, [prefs.autoSync, isOnline, marksState.queue, queueLength, syncStatus.state, syncNow]);
+  }, [canEdit, prefs.autoSync, isOnline, marksState.queue, queueLength, syncStatus.state, syncNow]);
 
   const value = useMemo<AppContextValue>(
     () => ({
@@ -552,7 +605,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setOrgConfig,
       isLive,
       phoneFormat,
-      requiresLogin: isLive && loginRequired,
+      requiresLogin: isLive && !canAccess,
+      authChecking: authState.key !== authKey || authState.status === 'checking',
+      authError: authState.key === authKey ? authState.error : null,
+      retryAuth: () => setAuthAttempt((n) => n + 1),
+      canEdit,
       username: session.username,
       role: session.role,
       login,
@@ -579,7 +636,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setOrgConfig,
       isLive,
       phoneFormat,
-      loginRequired,
+      canAccess,
+      canEdit,
+      authState,
+      authKey,
       session,
       login,
       logout,

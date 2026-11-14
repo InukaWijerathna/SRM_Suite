@@ -3,6 +3,7 @@ import { LoaderCircle } from 'lucide-react';
 import { AppProvider, useApp } from './context/AppContext';
 import type { TabId } from './types';
 import { Header } from './components/Header';
+import { AccountDrawer } from './components/AccountDrawer';
 import { BottomNav } from './components/BottomNav';
 import { Settings } from './components/Settings';
 import { Login } from './components/Login';
@@ -20,7 +21,9 @@ function Shell() {
   // stopped cleanly when the tab changes. The camera itself only runs while it is active.
   const [scannerOpened, setScannerOpened] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const { isLive, setupSeen, markSetupSeen } = useApp();
+  const [menuOpen, setMenuOpen] = useState(false);
+  const closeMenu = useCallback(() => setMenuOpen(false), []);
+  const { isLive, setupSeen, markSetupSeen, canEdit } = useApp();
 
   // First-ever launch (nothing configured, instructions never shown): open Settings
   // automatically so a new install isn't just a silent "Not connected" badge with no next step.
@@ -45,16 +48,16 @@ function Shell() {
 
   return (
     <div className="min-h-dvh">
-      <Header tab={tab} />
+      <Header tab={tab} menuOpen={menuOpen} onOpenMenu={() => setMenuOpen(true)} />
       <main
         id="panel"
         role="tabpanel"
         aria-labelledby={`tab-${tab}`}
-        className="mx-auto max-w-3xl pb-[calc(4.5rem+env(safe-area-inset-bottom))]"
+        className="mx-auto max-w-3xl pb-[calc(var(--bottom-nav-h,4rem)+0.5rem)]"
       >
-        {tab === 'directory' && <StudentDirectory />}
-        {tab === 'attendance' && <AttendanceList />}
-        {scannerOpened && (
+        {tab === 'directory' && <StudentDirectory onConfigure={() => setSettingsOpen(true)} />}
+        {tab === 'attendance' && canEdit && <AttendanceList />}
+        {scannerOpened && canEdit && (
           <Suspense
             fallback={
               <div className="mt-24 flex justify-center" role="status" aria-label="Loading scanner">
@@ -62,20 +65,21 @@ function Shell() {
               </div>
             }
           >
-            <QRScanner active={tab === 'scanner'} />
+            <QRScanner active={tab === 'scanner' && !menuOpen && !settingsOpen} />
           </Suspense>
         )}
       </main>
-      <BottomNav tab={tab} onTabChange={changeTab} onSettings={() => setSettingsOpen(true)} />
+      <BottomNav tab={tab} onTabChange={changeTab} />
       {settingsOpen && <Settings onClose={closeSettings} />}
+      {menuOpen && <AccountDrawer onClose={closeMenu} onSettings={() => { closeMenu(); setSettingsOpen(true); }} />}
     </div>
   );
 }
 
 /** Gates the app behind Login whenever a real sheet is connected and nobody's signed in. */
 function Gate() {
-  const { requiresLogin, username } = useApp();
-  return requiresLogin && !username ? <Login /> : <Shell />;
+  const { requiresLogin } = useApp();
+  return requiresLogin ? <Login /> : <Shell />;
 }
 
 export default function App() {

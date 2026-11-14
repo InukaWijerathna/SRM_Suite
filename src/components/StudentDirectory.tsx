@@ -1,5 +1,5 @@
 import { useCallback, useDeferredValue, useMemo, useState } from 'react';
-import { LoaderCircle, Search, TriangleAlert, X } from 'lucide-react';
+import { LoaderCircle, Search, TriangleAlert, Users, X } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import type { ChildRecord } from '../types';
 import { hasMedicalAlert } from '../lib/health';
@@ -17,8 +17,8 @@ const FILTERS: { id: Filter; label: string; test: (c: ChildRecord) => boolean }[
   { id: 'overweight', label: 'Overweight', test: (c) => c.weightCategory === 'overweight' },
 ];
 
-export function StudentDirectory() {
-  const { students, rosterStatus, refreshRoster } = useApp();
+export function StudentDirectory({ onConfigure }: { onConfigure: () => void }) {
+  const { students, rosterStatus, refreshRoster, isLive } = useApp();
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<Filter>('all');
   const [selected, setSelected] = useState<ChildRecord | null>(null);
@@ -60,8 +60,33 @@ export function StudentDirectory() {
 
   const closeModal = useCallback(() => setSelected(null), []);
 
+  if (!isLive) {
+    return (
+      <div className="mx-4 mt-10 rounded-2xl bg-white p-6 text-center shadow-sm ring-1 ring-slate-200">
+        <Users className="mx-auto h-8 w-8 text-brand-500" aria-hidden="true" />
+        <h2 className="mt-3 font-semibold text-slate-900">Connect your Google Sheet</h2>
+        <p className="mt-1 text-sm text-slate-500">Configure your organization's connection to get started.</p>
+        <button type="button" onClick={onConfigure} className="mt-4 min-h-touch rounded-xl bg-brand-600 px-5 font-semibold text-white hover:bg-brand-700">
+          Configure
+        </button>
+      </div>
+    );
+  }
+
   if (students.length === 0) {
-    return rosterStatus.state === 'error' ? (
+    if (rosterStatus.state === 'ready' && !rosterStatus.error) {
+      return (
+        <div className="mx-4 mt-10 rounded-2xl bg-white p-6 text-center shadow-sm ring-1 ring-slate-200">
+          <Users className="mx-auto h-8 w-8 text-brand-500" aria-hidden="true" />
+          <h2 className="mt-3 font-semibold text-slate-900">No students yet</h2>
+          <p className="mt-1 text-sm text-slate-500">Add students to your connected Google Sheet or use your registration form, then refresh the list.</p>
+          <button type="button" onClick={() => void refreshRoster()} className="mt-4 min-h-touch rounded-xl bg-brand-600 px-5 font-semibold text-white hover:bg-brand-700">
+            Refresh student list
+          </button>
+        </div>
+      );
+    }
+    return rosterStatus.state === 'error' || rosterStatus.error ? (
       <div className="mx-4 mt-10 rounded-2xl bg-white p-6 text-center shadow-sm ring-1 ring-slate-200">
         <TriangleAlert className="mx-auto h-8 w-8 text-amber-500" aria-hidden="true" />
         <p className="mt-3 font-semibold text-slate-900">Couldn&apos;t load students</p>

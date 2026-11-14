@@ -43,7 +43,7 @@ const SETUP_STEPS = [
   },
   {
     title: 'Add the backend script',
-    detail: "In the Sheet: Extensions → Apps Script. Paste in Code.gs, save, then run setup once and approve the permissions it asks for.",
+    detail: "In the Sheet: Extensions → Apps Script. Paste in Code.gs, save, run setup once, then run setUserPassword to create an editor account. Approve the permissions it asks for.",
   },
   {
     title: 'Publish it as a web app',
@@ -239,16 +239,16 @@ export function Settings({ onClose }: SettingsProps) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center sm:p-4">
+    <div className="fixed inset-0 z-50 flex items-stretch justify-start">
       <div className="absolute inset-0 animate-fade-in bg-slate-900/60" onClick={onClose} aria-hidden="true" />
       <div
         ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="settings-title"
-        className="relative flex max-h-[92dvh] w-full max-w-lg animate-slide-up flex-col overflow-hidden rounded-t-3xl bg-white shadow-2xl sm:rounded-3xl"
+        className="settings-panel relative flex h-dvh w-full max-w-lg flex-col overflow-hidden bg-white shadow-2xl"
       >
-        <div className="flex items-center gap-3 border-b border-slate-100 px-5 py-4">
+        <div className="flex shrink-0 items-center gap-3 border-b border-slate-100 px-5 pb-4 pt-[max(1rem,env(safe-area-inset-top))]">
           <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-brand-50 text-brand-700">
             <Settings2 className="h-5 w-5" aria-hidden="true" />
           </div>
@@ -271,7 +271,7 @@ export function Settings({ onClose }: SettingsProps) {
           </button>
         </div>
 
-        <div className="overflow-y-auto overscroll-contain">
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain pb-[env(safe-area-inset-bottom)]">
           <div className="border-b border-slate-100 bg-slate-50/60 px-5 py-4">
             <button
               type="button"

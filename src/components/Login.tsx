@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react';
-import { CircleAlert, LoaderCircle, LogIn, Settings2 } from 'lucide-react';
+import { CircleAlert, Eye, EyeOff, LoaderCircle, LogIn, Settings2 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { Settings } from './Settings';
 
@@ -10,10 +10,11 @@ import { Settings } from './Settings';
  * something you may need to do before you can log in at all.
  */
 export function Login() {
-  const { orgConfig, login } = useApp();
+  const { orgConfig, login, authChecking, authError, retryAuth } = useApp();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -48,6 +49,8 @@ export function Login() {
           <p className="mt-1 text-sm text-slate-500">Sign in to continue</p>
         </div>
 
+        {authChecking && <p role="status" className="mt-4 text-sm text-slate-600">Checking sign-in…</p>}
+        {authError && <div className="mt-4 text-sm text-rose-700" role="alert"><p>{authError}</p><button type="button" onClick={retryAuth} className="mt-2 min-h-touch font-semibold underline">Retry connection</button></div>}
         <form onSubmit={handleSubmit} className="mt-6 space-y-3">
           <label className="block">
             <span className="text-sm font-semibold text-slate-700">Username</span>
@@ -58,21 +61,35 @@ export function Login() {
               autoCorrect="off"
               autoComplete="username"
               required
-              autoFocus
               className="mt-1.5 min-h-touch w-full rounded-xl border-0 bg-white px-3.5 text-base shadow-sm ring-1 ring-slate-300 placeholder:text-slate-400 focus:ring-2 focus:ring-brand-600"
             />
           </label>
-          <label className="block">
-            <span className="text-sm font-semibold text-slate-700">Password</span>
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              autoComplete="current-password"
-              required
-              className="mt-1.5 min-h-touch w-full rounded-xl border-0 bg-white px-3.5 text-base shadow-sm ring-1 ring-slate-300 placeholder:text-slate-400 focus:ring-2 focus:ring-brand-600"
-            />
-          </label>
+          <div>
+            <label htmlFor="login-password" className="block text-sm font-semibold text-slate-700">Password</label>
+            <div className="relative mt-1.5">
+              <input
+                id="login-password"
+                type={showPassword ? 'text' : 'password'}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                autoComplete="current-password"
+                autoCapitalize="off"
+                spellCheck={false}
+                required
+                className="min-h-touch w-full rounded-xl border-0 bg-white pl-3.5 pr-14 text-base shadow-sm ring-1 ring-slate-300 placeholder:text-slate-400 focus:ring-2 focus:ring-brand-600"
+              />
+              <button
+                type="button"
+                aria-label={showPassword ? 'Hide password' : 'Show password'}
+                aria-pressed={showPassword}
+                aria-controls="login-password"
+                onClick={() => setShowPassword((shown) => !shown)}
+                className="absolute inset-y-0 right-0 flex min-h-touch min-w-touch items-center justify-center rounded-r-xl text-slate-500 hover:text-slate-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand-600"
+              >
+                {showPassword ? <EyeOff className="h-5 w-5" aria-hidden="true" /> : <Eye className="h-5 w-5" aria-hidden="true" />}
+              </button>
+            </div>
+          </div>
 
           {error && (
             <p className="flex items-start gap-1.5 text-sm font-medium text-rose-700" role="alert">
@@ -83,7 +100,7 @@ export function Login() {
 
           <button
             type="submit"
-            disabled={submitting}
+            disabled={submitting || authChecking}
             className="flex min-h-touch w-full items-center justify-center gap-2 rounded-xl bg-brand-600 px-4 font-bold text-white shadow-sm transition hover:bg-brand-700 active:scale-[0.98] disabled:opacity-60"
           >
             {submitting ? (
